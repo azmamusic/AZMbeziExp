@@ -1,0 +1,137 @@
+desc:AzmBezierGate
+tags:gate expander dynamics vocal
+
+// カーブ編集型のフルバンド・ゲート/エキスパンダー（歌声向け試作）。
+// グラフィック UI は未実装。REAPER 標準の generic UI のスライダーで操作する。
+//
+// 入力レベル(dB)→ゲイン(dB) のカーブを Attack / Release の2本持つ。
+//  - Attack カーブ : ゲートが開く側（レベルが上がるとき）に使われる
+//  - Release カーブ: ゲートが閉じる側（レベルが下がるとき）に使われる
+//  通常は Attack を Release より高いレベル側に置く（ヒステリシス）。
+//  Sync を On にすると両カーブが常に同じ値になる。
+
+slider1:range_db=30<0,96,0.1>Range (dB)
+slider2:a_close=-55<-90,0,0.1>Attack Curve Close (dB)
+slider3:a_open=-40<-90,0,0.1>Attack Curve Open (dB)
+slider4:a_shape=0<-100,100,1>Attack Curve Shape (%)
+slider5:curve_sync=0<0,1,1{Off,On}>Sync Attack/Release Curves
+slider6:r_close=-62<-90,0,0.1>Release Curve Close (dB)
+slider7:r_open=-47<-90,0,0.1>Release Curve Open (dB)
+slider8:r_shape=0<-100,100,1>Release Curve Shape (%)
+slider9:pk_sens=0<-24,24,0.1>Peak Sensitivity (dB)
+slider10:pk_rel=30<1,500,1:log>Peak Release (ms)
+slider11:rms_sens=0<-24,24,0.1>RMS Sensitivity (dB)
+slider12:rms_time=20<1,200,1:log>RMS Window (ms)
+slider13:rms_rel=60<1,1000,1:log>RMS Release (ms)
+slider14:g_open=1<0.1,100,0.1:log>Gain Smooth Open (ms)
+slider15:g_close=15<0.1,500,0.1:log>Gain Smooth Close (ms)
+
+in_pin:Left
+in_pin:Right
+out_pin:Left
+out_pin:Right
+
+@init
+// 時定数(ms) → 1サンプルあたりの減衰係数
+function decay_of(ms) (
+  exp(-1 / max(ms * 0.001 * srate, 1));
+);
+
+// レベル(dB) → ゲイン(dB, 0以下)。
+// Close..Open を 0..1 に正規化し、始点(0,0)・終点(1,1)・制御点(c,1-c) の
+// 2次ベジェ曲線で写像する。c=0.5 で直線、c>0.5 で Open 付近まで閉じ気味、
+// c<0.5 で早めに開く。x(u)=t を u について解いた式を使う。
+function curve_db(lvl, close, span, c, range)
+  local(t u)
+(
+  t = (lvl - close) / span;
+  t <= 0 ? ( -range ) : (
+    t >= 1 ? ( 0 ) : (
+      u = t / (c + sqrt(c * c + (1 - 2 * c) * t));
+      -range * (1 - (2 * u * (1 - u) * (1 - c) + u * u));
+    );
+  );
+);
+
+// Sync On のとき Attack/Release の同じ項目を双方向に同期する。
+// 直前に動かした側を正とし、Sync を入れた直後は Attack を Release にコピーする。
+function mirror(ai, ri, ci)
+  local(a r)
+(
+  a = slider(ai);
+  r = slider(ri);
+  sync_on ? (
+    !sync_prev || a != sync_cache[ci] ? (
+      r != a ? ( slider(ri) = a; sliderchange(slider(ri)); );
+    ) : r != sync_cache[ci] ? (
+      slider(ai) = r; sliderchange(slider(ai));
+      a = r;
+    );
+    sync_cache[ci] = a;
+  );
+);
+
+sync_cache = 0; // メモリ 0..2 に同期済みの値を保持
+
+// デノーマル回避用の下限（EEL2 では 1e-12 の指数表記が使えない）
+floor_amp = pow(10, -12);
+floor_pow = pow(10, -24);
+eps_db = pow(10, -9);
+
+pk = 0;
+msq = 0;
+rms_env = 0;
+gain_init = 1;
+
+@slider
+sync_on = curve_sync >= 0.5;
+mirror(2, 6, 0); // Close
+mirror(3, 7, 1); // Open
+mirror(4, 8, 2); // Shape
+sync_prev = sync_on;
+
+a_span = max(a_open - a_close, 0.01);
+r_span = max(r_open - r_close, 0.01);
+a_c = 0.5 + 0.5 * min(max(a_shape * 0.01, -0.999), 0.999);
+r_c = 0.5 + 0.5 * min(max(r_shape * 0.01, -0.999), 0.999);
+
+pk_gain = exp(pk_sens * 0.11512925464970229);
+rms_gain = exp(rms_sens * 0.11512925464970229);
+pk_decay = decay_of(pk_rel);
+rms_decay = decay_of(rms_rel);
+rms_k = 1 - decay_of(rms_time);
+k_open = 1 - decay_of(g_open);
+k_close = 1 - decay_of(g_close);
+
+@sample
+// ステレオリンク（L/R の大きい方）で検出
+a = max(abs(spl0), abs(spl1));
+
+// Peak: 即時アタック＋指数リリース
+pk = max(max(a, pk * pk_decay), floor_amp);
+// RMS: 2乗平均の1次平滑（正弦波でピークと同じ値になるよう sqrt(2x)）＋リリース
+msq = max(msq + rms_k * (a * a - msq), floor_pow);
+rms_env = max(max(sqrt(2 * msq), rms_env * rms_decay), floor_amp);
+
+// 感度調整後の大きい方を採用
+lvl_db = log(max(pk * pk_gain, rms_env * rms_gain)) * 8.685889638065037;
+
+la = curve_db(lvl_db, a_close, a_span, a_c, range_db);
+lr = curve_db(lvl_db, r_close, r_span, r_c, range_db);
+lo = min(la, lr);
+hi = max(la, lr);
+
+// 再生開始直後は現在の目標値にスナップ
+gain_init ? ( gdb = lo; gain_init = 0; );
+
+// lo 未満なら開く方向、hi 超過なら閉じる方向に追従。その間は保持。
+// 目標を僅か(eps_db)に越えさせ、漸近収束によるデノーマルを避ける。
+gdb < lo ? (
+  gdb += (lo - gdb + eps_db) * k_open;
+) : gdb > hi ? (
+  gdb += (hi - gdb - eps_db) * k_close;
+);
+
+gain = exp(gdb * 0.11512925464970229);
+spl0 *= gain;
+spl1 *= gain;
