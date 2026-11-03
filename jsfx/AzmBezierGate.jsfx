@@ -25,8 +25,8 @@ slider10:pk_rel=10<1,500,1:log>-Legacy Peak Release (unused)
 slider11:rms_sens=0<-24,24,0.1>-RMS Sensitivity (dB)
 slider12:rms_time=20<1,200,1:log>-RMS Window (ms)
 slider13:rms_rel=60<1,1000,1:log>-Legacy RMS Release (unused)
-slider14:g_open=1<0.1,100,0.1:log>-Attack Time (ms)
-slider15:g_close=15<0.1,500,0.1:log>-Release Time (ms)
+slider14:g_open=4<0.1,100,0.1:log>-Attack Time (ms)
+slider15:g_close=80<0.1,500,0.1:log>-Release Time (ms)
 slider16:meter_lo=-90<-90,-30,0.1>-Meter Min (dB)
 slider17:meter_hi=0<-60,0,0.1>-Meter Max (dB)
 slider18:fade_db=3<0,10,0.1>-Legacy Crossfade (unused)
@@ -266,8 +266,8 @@ pdef(8, -100, 100, -50, 1, 0, 0, "%", "Shape", "Release Shape", "Bend of the fal
 pdef(9, -24, 24, -3, 0.1, 0, 1, "dB", "Peak Sens", "Peak Sensitivity", "Gain on the Peak detector. + opens on quieter sounds", 1);
 pdef(11, -24, 24, 0, 0.1, 0, 1, "dB", "RMS Sens", "RMS Sensitivity", "Gain on the RMS detector. + opens on quieter sounds", 1);
 pdef(12, 1, 200, 20, 1, 1, 0, "ms", "RMS Window", "RMS Window", "Averaging time of the RMS detector", 0);
-pdef(14, 0.1, 100, 1, 0.1, 1, 1, "ms", "Time", "Attack Time", "Gain smoothing time while opening", 0);
-pdef(15, 0.1, 500, 15, 0.1, 1, 1, "ms", "Time", "Release Time", "Gain smoothing time while closing", 0);
+pdef(14, 0.1, 100, 4, 0.1, 1, 1, "ms", "Time", "Attack Time", "Gain smoothing time while opening", 0);
+pdef(15, 0.1, 500, 80, 0.1, 1, 1, "ms", "Time", "Release Time", "Gain smoothing time while closing", 0);
 pdef(16, -90, -30, -90, 0.1, 0, 1, "dB", "Meter Min", "Meter Min", "Drag or click to edit. Narrowing clamps both curves", 0);
 pdef(17, -60, 0, 0, 0.1, 0, 1, "dB", "Meter Max", "Meter Max", "Drag or click to edit. Narrowing clamps both curves", 0);
 pdef(19, 0, 100, 0, 1, 0, 0, "%", "RMS Ratio", "Attack RMS Ratio", "0% follows Peak; 100% follows RMS", 0);
@@ -472,7 +472,7 @@ function ui_begin() local(v pad) (
   pl_x = mg + 34 * S;
   pl_y = 46 * S;
   pl_w = max(gfx_w - mg - 40 * S - pl_x, 60 * S);
-  pl_b = max(kz_y - 46 * S, pl_y + 60 * S);
+  pl_b = max(kz_y - 54 * S, pl_y + 60 * S);
   pl_h = pl_b - pl_y;
   pad = 12 * S;
   g_x0 = pl_x + pad; g_w = pl_w - 2 * pad;
@@ -764,14 +764,16 @@ function ui_bound(i x y w h) local(hot id dx dy) (
   edit_id == i ? (
     edit_box(x, y, w, h);
   ) : (
-    hot || drag_id == id ? ( setc(C_SLOT, 1); rrect(x, y, w, h, 4 * S); );
+    setc(C_TRACK, 1); rrect(x, y, w, h, 4 * S);
+    setc(hot || drag_id == id ? C_SLOT : C_BG, 1);
+    rrect(x + S, y + S, w - 2 * S, h - 2 * S, 3 * S);
     strcpy(#bound, fmt(slider(i), 1)); strcat(#bound, " dB");
     font(2); setc(C_TEXT, 1); txt(#bound, x, y, w, h, 1 | 4);
   );
 );
 
 function ui_bounds() local(w h y) (
-  w = 76 * S; h = 16 * S; y = pl_b + 2 * S;
+  w = 76 * S; h = 16 * S; y = pl_b + 5 * S;
   ui_bound(16, g_x0, y, w, h);
   ui_bound(17, g_x0 + g_w - w, y, w, h);
 );
@@ -819,7 +821,7 @@ function meter_bar(y h lvl col) local(xl) (
 // グラフの下の細いバー（上が Peak、下が RMS）。値は右の余白に数字で出す。
 function ui_meters() local(y1 y2 h x) (
   h = 7 * S;
-  y1 = pl_b + 20 * S; y2 = pl_b + 32 * S;
+  y1 = pl_b + 27 * S; y2 = pl_b + 39 * S;
   setc(C_TRACK, 1);
   rrect(g_x0 - 2 * S, y1 - 2 * S, g_w + 4 * S, h + 4 * S, 3.5 * S);
   rrect(g_x0 - 2 * S, y2 - 2 * S, g_w + 4 * S, h + 4 * S, 3.5 * S);
@@ -846,7 +848,6 @@ function ui_gr() local(bx barw yt yb y) (
   y = ypix(clamp(gdb, -y_span, 0));
   setc(C_GR, 1); frect(bx, yt, barw, y - yt);
   font(4);
-  setc(C_DIM, 1); txt("GR", bx - 12 * S, pl_y - 3 * S, barw + 24 * S, 13 * S, 1 | 4);
   setc(C_GR, 1); txt(fmt(gdb, 1), bx - 14 * S, pl_b + 5 * S, barw + 28 * S, 13 * S, 1);
 );
 
@@ -935,7 +936,7 @@ function knob_group(title n p0 p1 p2 x) local(k p tw th) (
 function ui_knobs() local(x) (
   x = mg;
   x = knob_group("DETECTION", 3, 9, 11, 12, x);
-  x = knob_group("RANGE", 1, 1, 0, 0, x);
+  x = knob_group("REDUCTION", 1, 1, 0, 0, x);
   x = knob_group("ATTACK", 2, 14, 19, 0, x);
   x = knob_group("RELEASE", 2, 15, 20, 0, x);
 );

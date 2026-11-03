@@ -83,8 +83,8 @@ static void compare_reference(double attack_mix, double release_mix, bool sync)
     bool up = false;
     const double rms_k = 1 - std::exp(-1.0 / (0.020 * 48000));
     const double dir_k = 1 - std::exp(-1.0 / (0.002 * 48000));
-    const double open_k = 1 - std::exp(-1.0 / (0.001 * 48000));
-    const double close_k = 1 - std::exp(-1.0 / (0.015 * 48000));
+    const double open_k = 1 - std::exp(-1.0 / (0.004 * 48000));
+    const double close_k = 1 - std::exp(-1.0 / (0.080 * 48000));
     const double peak_gain = std::pow(10.0, -3.0 / 20);
     for (int i = 0; i < 16000; ++i) {
         double envelope = 0.0002 + 0.0015 * (1 + std::sin(i * 0.0013));
@@ -260,6 +260,8 @@ static void test_clamping()
 static void test_gui_bounds()
 {
     Effect e;
+    near(e.get(14), 4, 1e-6, "attack time default");
+    near(e.get(15), 80, 1e-6, "release time default");
     e.run(0.001, 0.001);
     std::vector<uint8_t> pixels(800 * 520 * 4);
     ysfx_gfx_config_t cfg{};
@@ -268,7 +270,22 @@ static void test_gui_bounds()
     ysfx_gfx_setup(e.fx, &cfg);
     ysfx_gfx_update_mouse(e.fx, 0, 0, 0, 0, 0, 0);
     ysfx_gfx_run(e.fx);
+    e.set(14, 10);
+    e.set(15, 20);
+    for (int knob_x : {454, 651}) {
+        int knob_y = static_cast<int>(e.var("kz_y") + 49);
+        for (int click = 0; click < 2; ++click) {
+            ysfx_gfx_update_mouse(e.fx, 0, knob_x, knob_y, 1, 0, 0);
+            ysfx_gfx_run(e.fx);
+            ysfx_gfx_update_mouse(e.fx, 0, knob_x, knob_y, 0, 0, 0);
+            ysfx_gfx_run(e.fx);
+        }
+    }
+    near(e.get(14), 4, 1e-6, "attack time reset");
+    near(e.get(15), 80, 1e-6, "release time reset");
     if (const char *path = std::getenv("AZM_TEST_SCREENSHOT")) {
+        ysfx_gfx_update_mouse(e.fx, 0, 0, 0, 0, 0, 0);
+        ysfx_gfx_run(e.fx);
         FILE *file = std::fopen(path, "wb");
         check(file != nullptr, "open screenshot");
         std::fprintf(file, "P6\n800 520\n255\n");
@@ -280,7 +297,7 @@ static void test_gui_bounds()
         std::fclose(file);
     }
     int x = static_cast<int>(e.var("g_x0") + 30);
-    int y = static_cast<int>(e.var("pl_b") + 10);
+    int y = static_cast<int>(e.var("pl_b") + 13);
     ysfx_gfx_update_mouse(e.fx, 0, x, y, 1, 0, 0);
     ysfx_gfx_run(e.fx);
     ysfx_gfx_update_mouse(e.fx, 0, x + 40, y, 1, 0, 0);

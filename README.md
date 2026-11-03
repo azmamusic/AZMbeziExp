@@ -4,28 +4,25 @@
 
 グラフ上のカーブでゲートの開き方を調整し、小さなノイズを抑えながら歌い出しや語尾を残せます。歌声と同時に鳴るノイズだけを分離するものではないため、小さな声を残すほどノイズも残りやすくなります。
 
+![AzmBezierGate の画面。Attack と Release のカーブ、メーター、各つまみを表示](docs/gui.png)
+
+*初期値を表示した画面です。メーターは入力によって変わります。*
+
 ## 導入
 
 JSFX に対応したホストのエフェクト用フォルダに [`jsfx/AzmBezierGate.jsfx`](jsfx/AzmBezierGate.jsfx) をコピーし、エフェクトとして追加します。フォルダの場所や追加方法は、使用するホストの案内を参照してください。
 
-## 仕組み
+## 使い方
 
-Peak と RMS を並列検知し、それぞれ感度を調整します。Attack と Release は、それぞれ独立した **RMS Ratio** で Peak／RMS の線形振幅を混合し、別々のカーブで目標ゲインを求めます。
+1. 歌声を再生し、グラフのメーターを見ながら Close／Open を調整します。Close 以下で最大減衰、Open 以上で減衰なしになります。
+2. Shape で開き方を調整します。Attack は入り、Release は語尾を聴きながら設定します。
+3. Range で最大減衰量を決め、Time と RMS Ratio で追随の速さや検知の性質を調整します。
 
-```text
-入力 ─┬─ Peak ─ Peak Sens ─┬─ Attack RMS Ratio  ─ Attack カーブ ─┐
-      └─ RMS  ─ RMS Sens  ─┴─ Release RMS Ratio ─ Release カーブ ┤
-                                                                    ↓
-                                                   上昇／下降で目標を選択
-                                                                    ↓
-                                             Attack／Release Time で追随 → 出力
-```
-
-検知レベルの変化に応じて Attack／Release のカーブを選択し、設定された時間で目標ゲインに追随します。RMS を使う場合は、RMS Window による検知の遅れも影響します。処理の詳細は [`docs/algorithm.md`](docs/algorithm.md) を参照してください。
+Peak と RMS を並列検知し、Attack／Release ごとに独立した RMS Ratio で混合します。検知レベルの変化からカーブを選び、目標ゲインに Time で追随します。RMS を使う場合は RMS Window による検知の遅れも影響します。処理の詳細は [アルゴリズム](docs/algorithm.md) を参照してください。
 
 ## 画面と操作
 
-グラフの横軸は検知レベル（dB）、縦軸はゲイン（dB）です。山吹色が Attack、白が Release。各カーブの **Close／Open** ハンドルを横方向に、**Shape** ハンドルを斜め方向にドラッグして編集します。白い点は選択された検知レベルと実ゲインを示します。検知レベルの表示は描画間の最大値を使い、ゆっくり下降します。Peak／RMS メーターはそれぞれ感度調整後の値です。
+グラフの横軸は検知レベル（dB）、縦軸はゲイン（dB）です。山吹色が Attack、白が Release。各カーブの **Close／Open** ハンドルを横方向に、**Shape** ハンドルを斜め方向にドラッグして編集します。白い点は選択された検知レベルと実ゲインを示し、右側の縦バーも実ゲインを示します。検知レベルの表示は描画間の最大値を使い、ゆっくり下降します。Peak／RMS メーターはそれぞれ感度調整後の値です。
 
 **SYNC** を On にすると Release カーブの代わりに Attack カーブを使います。Release の設定は保持され、Off にすると戻ります。ただし Attack／Release の RMS Ratio は Sync 中も別々に効きます。
 
@@ -34,17 +31,17 @@ Peak と RMS を並列検知し、それぞれ感度を調整します。Attack 
 | DETECTION | Peak Sens | Peak の感度。−24〜+24 dB、既定 −3 dB |
 | DETECTION | RMS Sens | RMS の感度。−24〜+24 dB、既定 0 dB |
 | DETECTION | RMS Window | RMS の平均時間。1〜200 ms、既定 20 ms |
-| RANGE | Range | 最大減衰量。0〜96 dB、既定 30 dB |
-| ATTACK | Time | ゲイン上昇時の追随時間。0.1〜100 ms、既定 1 ms |
+| REDUCTION | Range | 最大減衰量。0〜96 dB、既定 30 dB |
+| ATTACK | Time | ゲイン上昇時の追随時間。0.1〜100 ms、既定 4 ms |
 | ATTACK | RMS Ratio | Attack 用の混合比。0% は Peak、100% は RMS。既定 0% |
-| RELEASE | Time | ゲイン下降時の追随時間。0.1〜500 ms、既定 15 ms |
+| RELEASE | Time | ゲイン下降時の追随時間。0.1〜500 ms、既定 80 ms |
 | RELEASE | RMS Ratio | Release 用の混合比。0% は Peak、100% は RMS。既定 100% |
 
 つまみやハンドルはドラッグ、ホイール、右クリックでの数値入力ができます。Shift は微調整、ダブルクリックまたは Ctrl+クリックは既定値へのリセットです。
 
 ### 表示範囲
 
-グラフの左右下にある dB 値が横軸と Peak／RMS メーターの表示範囲です。値をドラッグすると変更でき、クリックすると数値を入力できます。Shift で微調整、Enter で確定、Esc で入力をキャンセルします。グラフの空白部分をダブルクリックすると表示範囲を既定値（−90〜0 dB）に戻します。最小値と最大値は 10 dB 以上離れます。
+グラフの左右下にある枠付きの dB 値が横軸と Peak／RMS メーターの表示範囲です。値をドラッグすると変更でき、クリックすると数値を入力できます。Shift で微調整、Enter で確定、Esc で入力をキャンセルします。グラフの空白部分をダブルクリックすると表示範囲を既定値（−90〜0 dB）に戻します。最小値と最大値は 10 dB 以上離れます。
 
 **表示範囲を狭めると、両カーブの Close／Open の設定値自体が範囲内に制限され、音も変わります。** Sync 中に保持された Release の値も対象です。範囲を広げ直しても、変更前の値は戻りません。Close と Open の間隔は 0.1 dB 以上に保たれます。
 

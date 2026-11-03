@@ -1,6 +1,10 @@
 # アルゴリズム
 
-[`jsfx/AzmBezierGate.jsfx`](../jsfx/AzmBezierGate.jsfx) の現行処理を説明します。既存の図は旧方式の測定結果であり、現行の挙動を示していません。
+[`jsfx/AzmBezierGate.jsfx`](../jsfx/AzmBezierGate.jsfx) の処理を説明します。図は処理の構成を示す模式図で、測定波形ではありません。
+
+![ステレオ入力から Peak・RMS 検知、方向判定、カーブ、ゲイン追随を経て出力する信号経路](algorithm-flow.svg)
+
+入力音声は検知経路とは別に保持され、計算したゲインを左右に共通して掛けます。ルックアヘッドはありません。
 
 ## 検知
 
@@ -23,13 +27,17 @@ RMS Window は二乗振幅の時定数です。無音への下降では、振幅
 
 カーブは、Close／Open 間のレベルを正規化した2次ベジェ曲線です。Shape から求める制御点 `(c, 1-c)` と、端点 `(0,0)`、`(1,1)` を使います。
 
+![Close 以下は最大減衰、Open 以上は 0 dB、間を Shape に応じたベジェ曲線で結ぶ図](algorithm-curve.svg)
+
+図は Close・Open・Range が同じ場合の形状例です。Shape が正なら開くのが遅く、負なら早くなります。Shape 0 は直線です。
+
 ```text
 x(u) = 2*c*u*(1-u) + u²
 y(u) = 2*(1-c)*u*(1-u) + u²
 gain_dB = -Range * (1 - y(u))
 ```
 
-Close 以下は `-Range` dB、Open 以上は 0 dB です。Sync 中は Release のカーブ形状に Attack の値を使いますが、Release の検知値や保存された Release 設定は別のままです。
+ここで `c = 0.5 + 0.5 * clamp(Shape / 100, -0.999, 0.999)`、`x` は Close〜Open の正規化レベルです。Close 以下は `-Range` dB、Open 以上は 0 dB です。Sync 中は Release のカーブ形状に Attack の値を使いますが、Release の検知値や保存された Release 設定は別のままです。
 
 選択された側の検知値を対応するカーブに通したものが単一の目標ゲインです。Deadband やカーブ間のゲイン保持、Crossfade はありません。方向が維持された場合も、目標と実ゲインが異なれば実ゲインは動きます。方向の選択は履歴を持つため、同じ入力値でも状況によって目標が異なることはあります。
 
