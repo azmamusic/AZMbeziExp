@@ -6,10 +6,13 @@ tags:gate expander dynamics vocal
 // パラメーターとしては残してある（オートメーション等に使う想定）。
 //
 // 入力レベル(dB)→ゲイン(dB) のカーブを Attack / Release の2本持つ。
-// 目標ゲインは「いまのゲインを2本のカーブの間（小さい方〜大きい方）に収めた値」。
-// 2本の間ではゲインを保持し（ヒステリシス）、下回れば開く方向、上回れば閉じる方向へ動く。
-// 開く側になるのは2本のうち高いレベル側にあるカーブ、閉じる側は低いレベル側のカーブ
-// （Attack / Release という名前ではなく、位置で決まる）。
+// 名前どおり、レベルが上がっていくときの閾値が Attack、下がっていくときの閾値が Release。
+// ゲインは、上昇中は開く方向にだけ、下降中は閉じる方向にだけ動く。
+// - Attack を左（低いレベル側）に置いた場合（既定）: 小さい音から先に開き、戻るときは早めに閉じ始める。
+//   上昇／下降は、直近の極値から dir_dead dB 以上逆向きに動いたときに切り替える（不感帯）。
+//   切り替え後は、さらに dir_fade dB 動く間に目標が Release ↔ Attack へなめらかに移る（飛び移らない）。
+// - Attack を右に置いた場合: 2本の間ではゲインを保持し（ヒステリシス）、
+//   Attack を下回れば開く方向、Release を上回れば閉じる方向へ動く。
 // Sync を On にすると、Release の代わりに Attack の値を使う。r_* スライダーは書き換えないので、
 // Off に戻せば別々に調整していた値がそのまま戻る。
 
@@ -104,6 +107,15 @@ rms_env = 0;
 gain_init = 1;
 gdb = 0;
 
+// レベルの上昇／下降の判定用。dir_up=1 は上昇中。lvl_ext は直近の極値（上昇中は最大、下降中は最小）。
+// dir_s は目標を Release(0) ↔ Attack(1) のどちらに寄せるか。上昇中は極値の更新量 / dir_fade ずつ 1 へ、
+// 下降中は 0 へ動く。時間ではなくレベルの動きで進むので、速い立ち上がりでも遅れない。
+dir_dead = 3;
+dir_fade = 3;
+dir_s = 0;
+dir_up = 0;
+lvl_ext = 0;
+
 // GUI との受け渡し用。m_* は @sample が前回描画以降の最大値を貯め、@gfx が読んで 0 に戻す。
 // ui_dirty は @gfx が立て、@block が下ろす。
 m_pk = 0;
@@ -113,7 +125,7 @@ ui_dirty = 0;
 
 //==================== GUI (@gfx) ====================
 // @gfx は @sample と別スレッドで動く。@sample が使う変数名
-// (a, pk, msq, rms_env, pk_lin, rms_lin, lin, lvl_db, la, lr, lo, hi, gain, gdb など) を
+// (a, pk, msq, rms_env, pk_lin, rms_lin, lin, lvl_db, la, lr, lo, tgt, dir_up, dir_s, lvl_ext, gain, gdb など) を
 // 書き換えないこと。関数内の一時変数は必ず local() にする。
 // DSP と共有してよいのは slider 変数・m_*・ui_dirty と、GR 表示のために読むだけの gdb。
 // EEL2 の識別子は大文字小文字を区別しない（S と s は同じ）ので、S を使う関数に s という名前の引数は付けない。
@@ -123,12 +135,13 @@ t_prev = time_precise();
 
 BW = 800; BH = 520;  // 基準サイズ。実際の拡大率 S は gfx_w/gfx_h から求める
 
-// パレット (0xRRGGBB)。紺の地にクリーム色の文字、赤の差し色。
-C_BG = 0x252C45; C_PANEL = 0x141A2D; C_GRID = 0x212944; C_GRID2 = 0x35406A;
-C_TEXT = 0xF2EBD9; C_DIM = 0xA9ADC2; C_FAINT = 0x6C7494;
-C_TRACK = 0x3B4668; C_SLOT = 0x2F3856; C_ACCENT = 0xEE5A52; C_ACCENT2 = 0xFF8A80;
-C_ATT = 0xFFB454; C_REL = 0x5BC0FF; C_HANDLE = 0xFF5A52;
-C_LIVE = 0x3DDC57; C_GR = 0xFF8A3D;
+// パレット (0xRRGGBB)。白（窓の地）・紺（グラフの地、文字、つまみ）・山吹（Attack と、操作中の目印）の 3 色を基調にする。
+// 色は平らに塗るだけで、グラデーションや影は使わない。山吹は目立つので、見せたいところにだけ使う。
+C_BG = 0xFFFFFF; C_PANEL = 0xF3F5F9; C_TRACK = 0xDFE4EE; C_SLOT = 0xEEF1F7; C_RULE = 0xD5DBE8;
+C_TEXT = 0x1F2E54; C_DIM = 0x5F6B8A; C_FAINT = 0x9AA4BC;
+C_PLOT = 0x1F2E54; C_GRID = 0x30426F; C_GRID2 = 0x4A5E94;
+C_YAM = 0xF0B13A; C_YAM2 = 0xF7C968; C_YAM3 = 0xDF9A22;
+C_ATT = 0xF0B13A; C_REL = 0xFFFFFF; C_SYNC = 0xF0B13A; C_LIVE = 0xFFFFFF; C_GR = 0x1F2E54;
 
 function clamp(x lim_lo lim_hi) ( x < lim_lo ? lim_lo : (x > lim_hi ? lim_hi : x) );
 function rnd(x) ( floor(x + 0.5) );
@@ -172,6 +185,19 @@ function tline(x1 y1 x2 y2 th) local(dx dy l n j o) (
   );
 );
 
+// 太さ th(px) の丸い端の線。塗りつぶした円を密に並べるので、斜めでも太さが一定で縁がなめらか（不透明で引くときだけ）。
+function sline(x0 y0 x1 y1 th) local(r l n k t) (
+  r = th * 0.5;
+  l = sqrt((x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0));
+  n = max(ceil(l / max(r * 0.45, 0.8)), 1);
+  k = 0;
+  loop(n + 1,
+    t = k / n;
+    gfx_circle(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, r, 1, 1);
+    k += 1;
+  );
+);
+
 // 中心(cx,cy)・半径 r1〜r2・角度 a0〜a1(rad, 真上が 0・時計回りが正) の円弧の帯
 function arcw(cx cy r1 r2 a0 a1) local(r) (
   a1 - a0 > 0.01 ? (
@@ -209,7 +235,7 @@ function fmt(v dec) local(p r) (
 // ---- パラメーター表（スライダー行の宣言と同じ値。5 番の Sync は別扱い） ----
 // 0..4: 最小 最大 既定 刻み log / 5: 小数桁 / 6: 単位 / 7: 短い名前 / 8: 正式名 / 9: ヒント / 10: 0 中心のノブ
 // GUI 用のメモリ配置: PT=64..279（表）, KR=300..371（つまみの範囲）, SY=372..375（SYNC ボタン）,
-// HP=380..415（ハンドル位置）, MT=420..429（メーターの色表）。重ならないよう、ここで一括管理する。
+// HP=380..415（ハンドル位置）。重ならないよう、ここで一括管理する。
 PT = 64;
 function pdef(i mn mx df st lg dc unit nm fnm hnt bip) local(b) (
   b = PT + i * 12;
@@ -219,12 +245,12 @@ function pdef(i mn mx df st lg dc unit nm fnm hnt bip) local(b) (
 function pget(i f) local(b) ( b = PT + i * 12; b[f]; );
 
 pdef(1, 0, 96, 30, 0.1, 0, 1, "dB", "Range", "Range", "Maximum attenuation when closed. Also sets the graph's gain axis", 0);
-pdef(2, -90, 0, -70, 0.1, 0, 1, "dB", "Close", "Attack Close", "Attack curve: level at or below which it is fully closed", 0);
-pdef(3, -90, 0, -60, 0.1, 0, 1, "dB", "Open", "Attack Open", "Attack curve: level at or above which it is fully open (0 dB)", 0);
-pdef(4, -100, 100, 50, 1, 0, 0, "%", "Shape", "Attack Shape", "Attack curve bend. + stays closed longer, - opens earlier", 0);
-pdef(6, -90, 0, -65, 0.1, 0, 1, "dB", "Close", "Release Close", "Release curve: level at or below which it is fully closed", 0);
-pdef(7, -90, 0, -55, 0.1, 0, 1, "dB", "Open", "Release Open", "Release curve: level at or above which it is fully open (0 dB)", 0);
-pdef(8, -100, 100, -50, 1, 0, 0, "%", "Shape", "Release Shape", "Release curve bend. + stays closed longer, - opens earlier", 0);
+pdef(2, -90, 0, -70, 0.1, 0, 1, "dB", "Close", "Attack Close", "Used while the level rises. Fully closed at or below this level", 0);
+pdef(3, -90, 0, -60, 0.1, 0, 1, "dB", "Open", "Attack Open", "Used while the level rises. Fully open (0 dB) at or above this level", 0);
+pdef(4, -100, 100, 50, 1, 0, 0, "%", "Shape", "Attack Shape", "Bend of the rising-level curve. + stays closed longer, - opens earlier", 0);
+pdef(6, -90, 0, -65, 0.1, 0, 1, "dB", "Close", "Release Close", "Used while the level falls. Fully closed at or below this level", 0);
+pdef(7, -90, 0, -55, 0.1, 0, 1, "dB", "Open", "Release Open", "Used while the level falls. Fully open (0 dB) at or above this level", 0);
+pdef(8, -100, 100, -50, 1, 0, 0, "%", "Shape", "Release Shape", "Bend of the falling-level curve. + stays closed longer, - opens earlier", 0);
 pdef(9, -24, 24, -3, 0.1, 0, 1, "dB", "Sens", "Peak Sensitivity", "Gain on the Peak detector. + opens on quieter sounds", 1);
 pdef(10, 1, 500, 10, 1, 1, 0, "ms", "Release", "Peak Release", "How slowly the Peak detector falls", 0);
 pdef(11, -24, 24, 0, 0.1, 0, 1, "dB", "Sens", "RMS Sensitivity", "Gain on the RMS detector. + opens on quieter sounds", 1);
@@ -343,16 +369,16 @@ function ui_keys() local(c) (
   );
 );
 
-// 入力欄。枠は赤、文字は右寄せ。クリックで確定する範囲(edit_r*)もここで記録する。
+// 入力欄。枠は山吹、文字は右寄せ。クリックで確定する範囲(edit_r*)もここで記録する。
 function edit_box(x y w h) local(str tw th tx) (
   edit_rx = x; edit_ry = y; edit_rw = w; edit_rh = h;
-  setc(C_ACCENT, 1); rrect(x, y, w, h, 5 * S);
-  setc(C_PANEL, 1); rrect(x + 1.5 * S, y + 1.5 * S, w - 3 * S, h - 3 * S, 4 * S);
+  setc(C_YAM, 1); rrect(x, y, w, h, 5 * S);
+  setc(C_BG, 1); rrect(x + 2 * S, y + 2 * S, w - 4 * S, h - 4 * S, 3.5 * S);
   font(1);
   str = #edit_str;
   gfx_measurestr(str, tw, th);
   tx = x + w - 8 * S - tw;
-  edit_fresh ? ( setc(C_ACCENT, 0.55); frect(tx - 2 * S, y + 3.5 * S, tw + 4 * S, h - 7 * S); );
+  edit_fresh ? ( setc(C_YAM, 0.4); frect(tx - 2 * S, y + 3.5 * S, tw + 4 * S, h - 7 * S); );
   setc(C_TEXT, 1);
   txt(str, tx, y, tw + 4 * S, h, 4);
   !edit_fresh && floor((now - edit_t0) * 2) % 2 == 0 ? ( setc(C_TEXT, 1); frect(x + w - 7 * S, y + 4 * S, max(S, 1), h - 8 * S); );
@@ -410,7 +436,7 @@ function ui_begin() local(v pad) (
   pad = 12 * S;
   g_x0 = pl_x + pad; g_w = pl_w - 2 * pad;
   g_y0 = pl_y + pad; g_h = pl_h - 2 * pad;
-  clip_l = pl_x + 1; clip_r = pl_x + pl_w - 1;
+  clip_l = pl_x + S; clip_r = pl_x + pl_w - S;
   hit_r2 = (16 * S) * (16 * S);
 );
 
@@ -429,23 +455,40 @@ function bz_x(u c) ( 2 * u * (1 - u) * c + u * u; );
 function bz_y(u c) ( 2 * u * (1 - u) * (1 - c) + u * u; );
 function bz_u(yn c) ( yn / ((1 - c) + sqrt((1 - c) * (1 - c) + (2 * c - 1) * yn)); );
 
-// 横方向を clip_l〜clip_r に切り詰めて線を引く（gfx にクリップ機能がないため）
-function cseg(x0 y0 x1 y1 th) local(t) (
+// 横方向を clip_l〜clip_r に切り詰めて線を引く（gfx にクリップ機能がないため）。
+// 太い線は塗りつぶした円を密に並べて引く（斜めでも太さが一定で、縁がなめらか）。水平な線は角のそろった長方形。
+// 細い線（Sync 中に残す Release など、半透明で引く線）は重ねると濃くなるので tline を使う。
+function cseg(x0 y0 x1 y1 th) local(t r l n k xx yy) (
   (x0 < clip_l && x1 < clip_l) || (x0 > clip_r && x1 > clip_r) ? 0 : (
     x0 < clip_l ? ( t = (clip_l - x0) / (x1 - x0); y0 += (y1 - y0) * t; x0 = clip_l; );
     x1 < clip_l ? ( t = (clip_l - x1) / (x0 - x1); y1 += (y0 - y1) * t; x1 = clip_l; );
     x0 > clip_r ? ( t = (x0 - clip_r) / (x0 - x1); y0 += (y1 - y0) * t; x0 = clip_r; );
     x1 > clip_r ? ( t = (x1 - clip_r) / (x1 - x0); y1 += (y0 - y1) * t; x1 = clip_r; );
-    tline(x0, y0, x1, y1, th);
+    th > 3 * S ? (
+      r = th * 0.5;
+      abs(y1 - y0) < 0.01 ? (
+        frect(min(x0, x1), rnd(y0 - r), abs(x1 - x0), max(rnd(y0 + r) - rnd(y0 - r), 1));
+      ) : (
+        l = sqrt((x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0));
+        n = max(ceil(l / max(r * 0.45, 0.8)), 1);
+        k = 0;
+        loop(n + 1,
+          t = k / n;
+          xx = x0 + (x1 - x0) * t; yy = y0 + (y1 - y0) * t;
+          xx >= clip_l + r && xx <= clip_r - r ? gfx_circle(xx, yy, r, 1, 1); // 枠にかかる円は描かない
+          k += 1;
+        );
+      );
+    ) : (
+      tline(x0, y0, x1, y1, th);
+    );
   );
 );
 
 function draw_grid() local(k x y raw step g dec every db first n) (
-  // クリーム色の太い縁と、暗いパネル
-  setc(C_TEXT, 1);
-  rrect(pl_x - 3 * S, pl_y - 3 * S, pl_w + 6 * S, pl_h + 6 * S, 13 * S);
-  setc(C_PANEL, 1);
-  rrect(pl_x, pl_y, pl_w, pl_h, 10 * S);
+  // 紺のパネル（角丸）
+  setc(C_PLOT, 1);
+  rrect(pl_x, pl_y, pl_w, pl_h, 12 * S);
 
   // 縦線: 入力レベル。範囲に応じて 1/2/5/10/20 dB 刻み
   raw = v_span / 8;
@@ -506,9 +549,9 @@ function curve_path(b th) local(cl op c span u k x0 y0 x1 y1 yb yt) (
   );
 );
 
-// 暗い縁取りを敷いてから色線を引く（2本が交差しても見分けやすい）
+// 縁取りを敷いてから色線を引く（2本が交差しても見分けやすい）。縁取りはグラフの地と同じ色。
 function draw_curve(b col th) (
-  setc(C_PANEL, 1); curve_path(b, th + 3 * S);
+  setc(C_PLOT, 1); curve_path(b, th + 3 * S);
   setc(col, 1); curve_path(b, th);
 );
 
@@ -519,7 +562,7 @@ function draw_band() local(k n yt yb h ac rc asp rsp yn xa xr x1 x2) (
   h = (yb - yt) / n;
   ac = shape_c(a_shape); rc = shape_c(r_shape);
   asp = max(a_open - a_close, 0.01); rsp = max(r_open - r_close, 0.01);
-  setc(C_TEXT, 0.1);
+  setc(0xFFFFFF, 0.1);
   k = 0;
   loop(n,
     yn = 1 - (k + 0.5) / n;
@@ -531,15 +574,14 @@ function draw_band() local(k n yt yb h ac rc asp rsp yn xa xr x1 x2) (
   );
 );
 
-// 現在の入力レベルとゲイン（緑の点）
+// 現在の入力レベルとゲイン（白い点）。紺の縁を付けて、白や山吹の線の上でも見えるようにする。
 function draw_live() local(x y) (
   x = xpix(clamp(ui_lvl, v_lo, v_hi));
   y = ypix(clamp(gdb, -y_span, 0));
-  setc(C_LIVE, 0.25);
+  setc(C_LIVE, 0.2);
   gfx_line(x, pl_y + 2 * S, x, pl_b - 2 * S, 0);
-  setc(C_LIVE, 0.2); gfx_circle(x, y, 7 * S, 1, 1);
-  setc(C_PANEL, 1); gfx_circle(x, y, 4.6 * S, 1, 1);
-  setc(C_LIVE, 1); gfx_circle(x, y, 3.4 * S, 1, 1);
+  setc(C_PLOT, 1); gfx_circle(x, y, 7.4 * S, 1, 1);
+  setc(C_LIVE, 1); gfx_circle(x, y, 4.8 * S, 1, 1);
 );
 
 // ハンドル ID = 100 + スライダー番号。位置を h_x, h_y に返す。表示範囲の外なら端に寄せ、h_off に -1/1 を返す。
@@ -609,32 +651,22 @@ function draw_handles() local(i id p b col hot r al) (
     hpos(id);
     HP[p * 2] = h_x; HP[p * 2 + 1] = h_y;
     al = h_off ? 0.5 : 1;
+    col = ui_sync ? C_SYNC : (b == 2 ? C_ATT : C_REL);
     p == b + 2 ? (
+      // 形状ハンドル: 曲線と同じ色の輪（中は紺）。つかむと塗りつぶす
       r = (hot ? 10 : 8.5) * S;
-      col = drag_id == id ? 0xFFFFFF : (hot ? C_ACCENT2 : C_HANDLE);
-      hot ? ( setc(C_HANDLE, 0.22); gfx_circle(h_x, h_y, r + 5 * S, 1, 1); );
-      setc(C_PANEL, al); gfx_circle(h_x, h_y, r + 2 * S, 1, 1);
+      hot ? ( setc(col, 0.2); gfx_circle(h_x, h_y, r + 4.5 * S, 1, 1); );
+      setc(C_PLOT, al); gfx_circle(h_x, h_y, r + 2.5 * S, 1, 1);
       setc(col, al); gfx_circle(h_x, h_y, r, 1, 1);
-      setc(C_PANEL, al); gfx_circle(h_x, h_y, r - 3 * S, 1, 1);
-      setc(col, al);
-      h_off ? (
-        gfx_triangle(h_x + h_off * 3.4 * S, h_y, h_x - h_off * 1.8 * S, h_y - 3.2 * S, h_x - h_off * 1.8 * S, h_y + 3.2 * S);
-      ) : (
-        gfx_circle(h_x, h_y, 2.4 * S, 1, 1);
-      );
+      drag_id != id ? ( setc(C_PLOT, 1); gfx_circle(h_x, h_y, r - 3.4 * S, 1, 1); );
+      drag_id != id && !h_off ? ( setc(col, 1); gfx_circle(h_x, h_y, 2.4 * S, 1, 1); );
     ) : (
-      col = ui_sync ? C_TEXT : (b == 2 ? C_ATT : C_REL);
-      r = (hot ? 8 : 6.5) * S;
-      hot ? ( setc(col, 0.25); gfx_circle(h_x, h_y, r + 5 * S, 1, 1); );
-      setc(C_PANEL, al); gfx_circle(h_x, h_y, r + 2.2 * S, 1, 1);
+      // Close / Open: 曲線と同じ色の点（紺の縁つき）。表示範囲の外にあるものは端に寄せ、薄い輪にする
+      r = (hot ? 9.5 : 8) * S;
+      hot ? ( setc(col, 0.2); gfx_circle(h_x, h_y, r + 5 * S, 1, 1); );
+      setc(C_PLOT, al); gfx_circle(h_x, h_y, r + 2.5 * S, 1, 1);
       setc(col, al); gfx_circle(h_x, h_y, r, 1, 1);
-      h_off ? (
-        // 表示範囲の外にあるハンドルは端に寄せ、外向きの三角形を入れる
-        setc(C_PANEL, 0.9);
-        gfx_triangle(h_x + h_off * 3.2 * S, h_y, h_x - h_off * 1.8 * S, h_y - 3 * S, h_x - h_off * 1.8 * S, h_y + 3 * S);
-      ) : (
-        setc(0xFFFFFF, 0.35); gfx_circle(h_x - r * 0.25, h_y - r * 0.25, r * 0.4, 1, 1);
-      );
+      h_off && drag_id != id ? ( setc(C_PLOT, 1); gfx_circle(h_x, h_y, r - 3.2 * S, 1, 1); );
     );
     i += 1;
   );
@@ -655,10 +687,9 @@ function draw_tip() local(p w h x y tw th ed bw nmw vw) (
   bw = ed ? 70 * S : vw;
   w = nmw + bw + 28 * S;
   hpos(100 + p);
-  x = clamp(h_x + 14 * S, pl_x + 4 * S, pl_x + pl_w - w - 4 * S);
-  y = clamp(h_y - h - 14 * S, pl_y + 4 * S, pl_b - h - 4 * S);
-  setc(C_TEXT, 1); rrect(x, y, w, h, 7 * S);
-  setc(C_BG, 1); rrect(x + 1.5 * S, y + 1.5 * S, w - 3 * S, h - 3 * S, 5.5 * S);
+  x = clamp(h_x + 16 * S, pl_x + 4 * S, pl_x + pl_w - w - 4 * S);
+  y = clamp(h_y - h - 16 * S, pl_y + 4 * S, pl_b - h - 4 * S);
+  setc(C_BG, 1); rrect(x, y, w, h, 7 * S);
   setc(C_DIM, 1); txt(#tipn, x + 10 * S, y, nmw + 4 * S, h, 4);
   ed ? (
     edit_box(x + 16 * S + nmw, y + 3 * S, bw, h - 6 * S);
@@ -684,12 +715,12 @@ function ui_plot() local(inp) (
 
   draw_grid();
   ui_sync ? (
-    setc(C_REL, 0.3); curve_path(6, 1.2 * S); // Sync 中も、別に調整した Release を薄く残して見せる
-    draw_curve(2, C_TEXT, 2.4 * S);
+    setc(C_REL, 0.35); curve_path(6, 2 * S); // Sync 中も、別に調整した Release を薄く残して見せる
+    draw_curve(2, C_SYNC, 5.5 * S);
   ) : (
     draw_band();
-    draw_curve(6, C_REL, 2.4 * S);
-    draw_curve(2, C_ATT, 2.4 * S);
+    draw_curve(6, C_REL, 5.5 * S);
+    draw_curve(2, C_ATT, 5.5 * S);
   );
   draw_live();
   draw_handles();
@@ -697,47 +728,24 @@ function ui_plot() local(inp) (
 );
 
 // ---- メーター（Peak / RMS）とゲインリダクション ----
-MT = 420;
-function mdef(i db col) ( MT[i] = db; MT[5 + i] = col; );
-mdef(0, -90, 0x14B8B0); mdef(1, -54, 0x35D05C); mdef(2, -27, 0xE8D23C);
-mdef(3, -9, 0xF08A2E); mdef(4, 0, 0xE23B30);
-
-function chan(col sh) ( ((col >> sh) & 255) / 255; );
-
-// x 軸はグラフと共通。暗い全長の上に、レベルまでを明るく重ねる。色は dB に固定（-9 dB 付近からオレンジ、0 dB が赤）。
-function meter_bar(y h lvl) local(i x xa xb xl m0 m1 d0 d1 t0 t1 c0 c1 w r0 g0 b0 r1 g1 b1) (
+// x 軸はグラフと共通。レベルまでを塗る（Peak は紺、RMS は山吹）。
+function meter_bar(y h lvl col) local(xl) (
   xl = rnd(xpix(clamp(lvl, v_lo, v_hi)));
-  i = 0;
-  loop(4,
-    m0 = MT[i]; m1 = MT[i + 1];
-    d0 = max(m0, v_lo); d1 = min(m1, v_hi);
-    d1 > d0 ? (
-      c0 = MT[5 + i]; c1 = MT[6 + i];
-      t0 = (d0 - m0) / (m1 - m0); t1 = (d1 - m0) / (m1 - m0);
-      r0 = chan(c0, 16); g0 = chan(c0, 8); b0 = chan(c0, 0);
-      r1 = chan(c1, 16); g1 = chan(c1, 8); b1 = chan(c1, 0);
-      xa = rnd(xpix(d0)); xb = rnd(xpix(d1));
-      w = max(xb - xa, 1);
-      gfx_gradrect(xa, y, w, h, r0 + (r1 - r0) * t0, g0 + (g1 - g0) * t0, b0 + (b1 - b0) * t0, 0.22,
-                   (r1 - r0) * (t1 - t0) / w, (g1 - g0) * (t1 - t0) / w, (b1 - b0) * (t1 - t0) / w, 0, 0, 0, 0, 0);
-      xl > xa ? (
-        gfx_gradrect(xa, y, min(xl - xa, w), h, r0 + (r1 - r0) * t0, g0 + (g1 - g0) * t0, b0 + (b1 - b0) * t0, 1,
-                     (r1 - r0) * (t1 - t0) / w, (g1 - g0) * (t1 - t0) / w, (b1 - b0) * (t1 - t0) / w, 0, 0, 0, 0, 0);
-      );
-    );
-    i += 1;
-  );
+  xl > g_x0 ? ( setc(col, 1); frect(g_x0, y, xl - g_x0, h); );
 );
 
 // グラフの下の細いバー（上が Peak、下が RMS）。値は右の余白に数字で出す。
 function ui_meters() local(y1 y2 h x) (
-  h = 6 * S;
-  y1 = pl_b + 20 * S; y2 = pl_b + 31 * S;
-  setc(C_PANEL, 1);
-  rrect(g_x0 - 2 * S, y1 - 2 * S, g_w + 4 * S, h + 4 * S, 3 * S);
-  rrect(g_x0 - 2 * S, y2 - 2 * S, g_w + 4 * S, h + 4 * S, 3 * S);
-  meter_bar(y1, h, ui_pk);
-  meter_bar(y2, h, ui_rms);
+  h = 7 * S;
+  y1 = pl_b + 20 * S; y2 = pl_b + 32 * S;
+  setc(C_TRACK, 1);
+  rrect(g_x0 - 2 * S, y1 - 2 * S, g_w + 4 * S, h + 4 * S, 3.5 * S);
+  rrect(g_x0 - 2 * S, y2 - 2 * S, g_w + 4 * S, h + 4 * S, 3.5 * S);
+  setc(C_BG, 1);
+  frect(g_x0, y1, g_w, h);
+  frect(g_x0, y2, g_w, h);
+  meter_bar(y1, h, ui_pk, C_TEXT);
+  meter_bar(y2, h, ui_rms, C_YAM);
   font(4); setc(C_DIM, 1);
   txt("PEAK", pl_x - 40 * S, y1 - 2 * S, 36 * S, h + 4 * S, 2 | 4);
   txt("RMS", pl_x - 40 * S, y2 - 2 * S, 36 * S, h + 4 * S, 2 | 4);
@@ -747,11 +755,12 @@ function ui_meters() local(y1 y2 h x) (
   txt(ui_rms > -100 ? fmt(ui_rms, 1) : "-inf", x, y2 - 2 * S, 40 * S, h + 4 * S, 4);
 );
 
-// グラフ右の縦バー。縦軸はグラフのゲイン軸と共通（緑の点と高さが揃う）。
+// グラフ右の縦バー。縦軸はグラフのゲイン軸と共通（紺の点と高さが揃う）。
 function ui_gr() local(bx barw yt yb y) (
   bx = pl_x + pl_w + 12 * S; barw = 10 * S;
   yt = ypix(0); yb = ypix(-y_span);
-  setc(C_PANEL, 1); rrect(bx - 2 * S, yt - 2 * S, barw + 4 * S, yb - yt + 4 * S, 4 * S);
+  setc(C_TRACK, 1); rrect(bx - 2 * S, yt - 2 * S, barw + 4 * S, yb - yt + 4 * S, 4.5 * S);
+  setc(C_BG, 1); frect(bx, yt, barw, yb - yt);
   y = ypix(clamp(gdb, -y_span, 0));
   setc(C_GR, 1); frect(bx, yt, barw, y - yt);
   font(4);
@@ -762,17 +771,30 @@ function ui_gr() local(bx barw yt yb y) (
 // ---- つまみ ----
 KR = 300; // 各つまみの範囲（KR[i*4]..）。テスト用にも使う
 
+// 太い弧の端を丸める。中心半径 rm・角度 ang・帯の太さ w。
+function arc_cap(cx cy rm ang w) (
+  gfx_circle(cx + sin(ang) * rm, cy - cos(ang) * rm, w * 0.5, 1, 1);
+);
+
 // 角度 ±135° に値を割り当てた円形つまみ。bip なら 0 の位置(真上)から値まで弧を引く。
-function knob_draw(cx cy rad n bip hot act) local(ang rin) (
+function knob_draw(cx cy rad n bip hot act) local(ang rin rm w a0 a1) (
   ang = (n - 0.5) * 4.71238898038469;
-  rin = rad - 5 * S;
-  setc(C_TRACK, 1); arcw(cx, cy, rin + 0.5 * S, rad, -2.356194490192345, 2.356194490192345);
-  setc(act || hot ? C_ACCENT2 : C_ACCENT, 1);
-  bip ? arcw(cx, cy, rin + 0.5 * S, rad, min(0, ang), max(0, ang)) : arcw(cx, cy, rin + 0.5 * S, rad, -2.356194490192345, ang);
-  setc(0x000000, 0.3); gfx_circle(cx, cy + 1.5 * S, rin - 0.5 * S, 1, 1);
-  setc(act || hot ? 0xFFFFFF : C_TEXT, 1); gfx_circle(cx, cy, rin - 1.5 * S, 1, 1);
+  w = 4.8 * S;
+  rin = rad - w;
+  rm = rad - w * 0.5;
+  setc(C_TRACK, 1);
+  arcw(cx, cy, rin, rad, -2.356194490192345, 2.356194490192345);
+  arc_cap(cx, cy, rm, -2.356194490192345, w);
+  arc_cap(cx, cy, rm, 2.356194490192345, w);
+  a0 = bip ? min(0, ang) : -2.356194490192345;
+  a1 = bip ? max(0, ang) : ang;
+  setc(act || hot ? C_YAM3 : C_YAM, 1);
+  arcw(cx, cy, rin, rad, a0, a1);
+  arc_cap(cx, cy, rm, a0, w);
+  arc_cap(cx, cy, rm, a1, w);
+  setc(C_TEXT, 1); gfx_circle(cx, cy, rin - 2.4 * S, 1, 1);
   setc(C_BG, 1);
-  tline(cx + sin(ang) * 1.5 * S, cy - cos(ang) * 1.5 * S, cx + sin(ang) * (rin - 3.5 * S), cy - cos(ang) * (rin - 3.5 * S), 2.4 * S);
+  sline(cx + sin(ang) * 2 * S, cy - cos(ang) * 2 * S, cx + sin(ang) * (rin - 6.4 * S), cy - cos(ang) * (rin - 6.4 * S), 2.6 * S);
 );
 
 // 1 つの枠 = 名前・つまみ・値。ドラッグ（上下＋左右）で変更、ホイール、ダブルクリックで初期値、右クリックで数値入力。
@@ -798,7 +820,7 @@ function knob_slot(i sx sy sw sh) local(hot act ed ined n cx cy rad vy tw th) (
   act = drag_id == i;
   n = p_norm(i, slider(i));
   hot || act ? ( setc(C_SLOT, 1); rrect(sx + 1 * S, sy, sw - 2 * S, sh - 4 * S, 8 * S); );
-  font(5); setc(hot || act ? 0xFFFFFF : C_TEXT, 1);
+  font(5); setc(C_TEXT, 1);
   txt(pget(i, 7), sx, sy + 2 * S, sw, 12 * S, 1 | 4);
   rad = 17 * S; cx = sx + sw * 0.5; cy = sy + 18 * S + rad;
   knob_draw(cx, cy, rad, n, pget(i, 10), hot, act);
@@ -807,7 +829,7 @@ function knob_slot(i sx sy sw sh) local(hot act ed ined n cx cy rad vy tw th) (
     strcpy(#kv, fmt(slider(i), pget(i, 5)));
     strcat(#kv, " ");
     strcat(#kv, pget(i, 6));
-    font(1); setc(act || hot ? 0xFFFFFF : C_DIM, 1);
+    font(1); setc(act || hot ? C_TEXT : C_DIM, 1);
     txt(#kv, sx, vy, sw, 17 * S, 1 | 4);
   );
 );
@@ -817,7 +839,7 @@ function knob_group(title n p0 p1 p2 x) local(k p tw th) (
   font(4); setc(C_DIM, 1);
   gfx_measurestr(title, tw, th);
   txt(title, x + 2 * S, kz_y, tw + 8 * S, 12 * S, 4);
-  setc(C_GRID2, 1);
+  setc(C_RULE, 1);
   gfx_line(x + tw + 12 * S, kz_y + 6 * S, x + n * kw - 2 * S, kz_y + 6 * S, 0);
   k = 0;
   loop(n,
@@ -837,11 +859,11 @@ function ui_knobs() local(x) (
 );
 
 // ---- ヘッダー（タイトル・凡例・SYNC） ----
-function leg_item(x y col al label) local(w h) (
+// 凡例は紺のタグ。グラフと同じ紺の地に、山吹と白の印を置く。
+function leg_item(x y col al label w) (
   setc(col, al); gfx_circle(x + 5 * S, y + 8 * S, 4.5 * S, 1, 1);
-  font(5); gfx_measurestr(label, w, h);
-  setc(C_TEXT, al > 0.5 ? 1 : 0.6); txt(label, x + 15 * S, y, w + 4 * S, 16 * S, 4);
-  x + 15 * S + w + 16 * S;
+  font(5); setc(C_BG, al > 0.5 ? 1 : 0.6);
+  txt(label, x + 15 * S, y, w + 4 * S, 16 * S, 4);
 );
 
 SY = 372; // SYNC ボタンの範囲（SY[0..3]）。テスト用にも使う
@@ -851,27 +873,34 @@ function sync_pill(x y w h) local(hot) (
   hot ? ( hint_id = 300; );
   ldown && hot ? set_sync(!ui_sync);
   ui_sync ? (
-    setc(C_ACCENT, 1); rrect(x, y, w, h, h * 0.5);
+    setc(hot ? C_YAM2 : C_YAM, 1); rrect(x, y, w, h, h * 0.5);
   ) : (
-    setc(hot ? C_FAINT : C_TRACK, 1); rrect(x, y, w, h, h * 0.5);
-    setc(C_BG, 1); rrect(x + 2 * S, y + 2 * S, w - 4 * S, h - 4 * S, h * 0.5 - 2 * S);
+    setc(C_TEXT, 1); rrect(x, y, w, h, h * 0.5);
+    setc(hot ? C_SLOT : C_BG, 1); rrect(x + 2 * S, y + 2 * S, w - 4 * S, h - 4 * S, h * 0.5 - 2 * S);
   );
-  setc(ui_sync ? 0xFFFFFF : C_FAINT, 1); gfx_circle(x + h * 0.5 + 1 * S, y + h * 0.5, 3.6 * S, 1, 1);
-  font(6); setc(ui_sync ? 0xFFFFFF : C_TEXT, 1);
+  setc(ui_sync ? C_TEXT : C_FAINT, 1); gfx_circle(x + h * 0.5 + 1 * S, y + h * 0.5, 3.8 * S, 1, 1);
+  font(6); setc(C_TEXT, 1);
   txt("SYNC", x + h, y, w - h - 8 * S, h, 1 | 4);
 );
 
-function ui_header() local(x tw th) (
+function ui_header() local(x tw th w1 w2 hh lw) (
   font(3); setc(C_TEXT, 1);
   gfx_measurestr("AzmBezierGate", tw, th);
   txt("AzmBezierGate", mg + 2 * S, 8 * S, tw + 4 * S, 28 * S, 4);
-  x = mg + tw + 34 * S;
+  strcpy(#lg1, ui_sync ? "Attack = Release" : "Attack");
+  strcpy(#lg2, ui_sync ? "Release (kept)" : "Release");
+  font(5);
+  gfx_measurestr(#lg1, w1, hh);
+  gfx_measurestr(#lg2, w2, hh);
+  x = mg + tw + 30 * S;
+  lw = 14 * S + 15 * S + w1 + 16 * S + 15 * S + w2 + 14 * S;
+  setc(C_PLOT, 1); rrect(x, 11 * S, lw, 26 * S, 13 * S);
   ui_sync ? (
-    x = leg_item(x, 14 * S, C_TEXT, 1, "Attack = Release");
-    x = leg_item(x, 14 * S, C_REL, 0.45, "Release (kept)");
+    leg_item(x + 14 * S, 16 * S, C_SYNC, 1, #lg1, w1);
+    leg_item(x + 14 * S + 15 * S + w1 + 16 * S, 16 * S, C_REL, 0.45, #lg2, w2);
   ) : (
-    x = leg_item(x, 14 * S, C_ATT, 1, "Attack");
-    x = leg_item(x, 14 * S, C_REL, 1, "Release");
+    leg_item(x + 14 * S, 16 * S, C_ATT, 1, #lg1, w1);
+    leg_item(x + 14 * S + 15 * S + w1 + 16 * S, 16 * S, C_REL, 1, #lg2, w2);
   );
   sync_pill(gfx_w - mg - 92 * S, 11 * S, 92 * S, 26 * S);
 );
@@ -946,20 +975,47 @@ m_pk = max(m_pk, pk_lin);
 m_rms = max(m_rms, rms_lin);
 m_lin = max(m_lin, lin);
 
+// レベルが上がっているか下がっているか。逆向きに dir_dead 以上動いたときだけ切り替える。
+dir_up ? (
+  lvl_db > lvl_ext ? (
+    dir_s = min(dir_s + (lvl_db - lvl_ext) / dir_fade, 1);
+    lvl_ext = lvl_db;
+  ) : (
+    lvl_db < lvl_ext - dir_dead ? ( dir_up = 0; lvl_ext = lvl_db; );
+  );
+) : (
+  lvl_db < lvl_ext ? (
+    dir_s = max(dir_s - (lvl_ext - lvl_db) / dir_fade, 0);
+    lvl_ext = lvl_db;
+  ) : (
+    lvl_db > lvl_ext + dir_dead ? ( dir_up = 1; lvl_ext = lvl_db; );
+  );
+);
+
 la = curve_db(lvl_db, a_close, a_span, a_c, range_db);
 lr = curve_db(lvl_db, e_close, r_span, r_c, range_db);
 lo = min(la, lr);
-hi = max(la, lr);
 
 // 再生開始直後は現在の目標値にスナップ
 gain_init ? ( gdb = lo; gain_init = 0; );
 
-// lo 未満なら開く方向、hi 超過なら閉じる方向に追従。その間は保持。
 // 目標を僅か(eps_db)に越えさせ、漸近収束によるデノーマルを避ける。
-gdb < lo ? (
-  gdb += (lo - gdb + eps_db) * k_open;
-) : gdb > hi ? (
-  gdb += (hi - gdb - eps_db) * k_close;
+la > lr ? (
+  // Attack の方がゲインが大きい: 目標は Release と Attack の間（dir_s で寄せ方が決まる）。
+  // 上昇中は目標へ向けて開く方向だけ、下降中は閉じる方向だけ動く。
+  tgt = lr + dir_s * (la - lr);
+  dir_up ? (
+    gdb < tgt ? ( gdb += (tgt - gdb + eps_db) * k_open; );
+  ) : (
+    gdb > tgt ? ( gdb += (tgt - gdb - eps_db) * k_close; );
+  );
+) : (
+  // Attack の方が小さい（または同じ）: 2本の間は保持。Attack 未満なら開き、Release 超過なら閉じる。
+  gdb < la ? (
+    gdb += (la - gdb + eps_db) * k_open;
+  ) : gdb > lr ? (
+    gdb += (lr - gdb - eps_db) * k_close;
+  );
 );
 
 gain = exp(gdb * 0.11512925464970229);
