@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="430" viewBox="0 0 1000 430" role="img" aria-labelledby="title desc">
+  <title id="title">AzmBezierGate signal flow</title>
+  <desc id="desc">Peak and RMS detection feed independent attack and release mixes. Their levels drive direction selection and curves. The selected target is smoothed and applied equally to both input channels.</desc>
+  <defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="userSpaceOnUse"><path d="M0 0L8 4 0 8Z" fill="#5f6b8a"/></marker></defs>
+  <rect width="1000" height="430" rx="16" fill="#f3f5f9"/>
+  <g font-family="Arial, sans-serif" fill="#1f2e54" text-anchor="middle">
+    <g fill="#fff" stroke="#d5dbe8" stroke-width="1.5">
+      <rect x="20" y="128" width="110" height="64" rx="9"/>
+      <rect x="164" y="65" width="130" height="64" rx="9"/><rect x="164" y="191" width="130" height="64" rx="9"/>
+      <rect x="337" y="65" width="145" height="64" rx="9"/><rect x="337" y="191" width="145" height="64" rx="9"/>
+      <rect x="530" y="25" width="150" height="64" rx="9"/><rect x="530" y="140" width="150" height="80" rx="9"/><rect x="530" y="271" width="150" height="64" rx="9"/>
+      <rect x="720" y="146" width="112" height="68" rx="9"/><rect x="864" y="146" width="110" height="68" rx="9"/>
+    </g>
+    <g fill="none" stroke="#5f6b8a" stroke-width="2" marker-end="url(#arrow)">
+      <path d="M130 160H147V97H164"/><path d="M130 160H147V223H164"/>
+      <path d="M294 97H337"/><path d="M294 223H315V115H337"/>
+      <path d="M294 97H315V205H337"/><path d="M294 223H337"/>
+      <path d="M482 97H506V57H530"/><path d="M482 223H506V303H530"/>
+      <path d="M482 97H506V160H530"/><path d="M482 223H506V200H530"/>
+      <path d="M680 57H702V162H720"/><path d="M680 303H702V198H720"/><path d="M680 180H720"/>
+      <path d="M832 180H864"/>
+      <path d="M75 192V375H919V214"/>
+    </g>
+    <g font-size="16" font-weight="bold">
+      <text x="75" y="153">Input L/R</text><text x="229" y="91">Peak</text><text x="229" y="217">RMS</text>
+      <text x="409" y="91">Attack mix</text><text x="409" y="217">Release mix</text>
+      <text x="605" y="51">Attack curve</text><text x="605" y="173">Direction</text><text x="605" y="297">Release curve</text>
+      <text x="776" y="174">Target</text><text x="919" y="174">Gain</text>
+    </g>
+    <g font-size="12" fill="#5f6b8a">
+      <text x="75" y="174">max(|L|, |R|)</text><text x="229" y="111">Peak Sens</text><text x="229" y="237">Window / RMS Sens</text>
+      <text x="409" y="111">Attack RMS Ratio</text><text x="409" y="237">Release RMS Ratio</text>
+      <text x="605" y="70">A in dB</text><text x="605" y="192">2 ms slope detector</text><text x="605" y="209">Attack priority</text><text x="605" y="316">R in dB</text>
+      <text x="776" y="195">select A or R</text><text x="919" y="194">Time smoothing</text>
+      <text x="480" y="397">Audio L/R × same linear gain → output L/R</text>
+    </g>
+  </g>
+</svg>
