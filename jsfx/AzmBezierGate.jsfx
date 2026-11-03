@@ -9,9 +9,9 @@ tags:gate expander dynamics vocal
 // 名前どおり、レベルが上がっていくときの閾値が Attack、下がっていくときの閾値が Release。
 // ゲインは、上昇中は開く方向にだけ、下降中は閉じる方向にだけ動く。
 // - Attack を左（低いレベル側）に置いた場合（既定）: 小さい音から先に開き、戻るときは早めに閉じ始める。
-//   上昇／下降は、直近の極値から dir_dead（Deadband）dB 以上逆向きに動いたときに切り替える。
-//   切り替え後は、さらに dir_fade（Crossfade）dB 動く間に目標が Release ↔ Attack へなめらかに移る（飛び移らない）。
-//   どちらも既定は 1 dB。大きくすると切り替わりにくく、切り替わっても段差が小さくなる（その分、閉じ始めは遅れる）。
+//   上昇／下降は、直近の極値から dir_dead（3 dB の固定値）以上逆向きに動いたときに切り替える（不感帯）。
+//   切り替え後は、さらに dir_fade（Crossfade。つまみで 0〜10 dB、既定 3 dB）動く間に目標が Release ↔ Attack へ
+//   なめらかに移る（飛び移らない）。大きくするほど切り替えの段差が小さくなる（その分、目標が移りきるのは遅れる）。
 // - Attack を右に置いた場合: 2本の間ではゲインを保持し（ヒステリシス）、
 //   Attack を下回れば開く方向、Release を上回れば閉じる方向へ動く。
 // Sync を On にすると、Release の代わりに Attack の値を使う。r_* スライダーは書き換えないので、
@@ -38,8 +38,7 @@ slider14:g_open=1<0.1,100,0.1:log>-Gain Smooth Open (ms)
 slider15:g_close=15<0.1,500,0.1:log>-Gain Smooth Close (ms)
 slider16:meter_lo=-90<-90,-30,1>-Meter Min (dB)
 slider17:meter_hi=0<-60,0,1>-Meter Max (dB)
-slider18:dead_db=1<0,10,0.1>-Curve Switch Deadband (dB)
-slider19:fade_db=1<0,10,0.1>-Curve Switch Crossfade (dB)
+slider18:fade_db=3<0,10,0.1>-Curve Switch Crossfade (dB)
 
 in_pin:Left
 in_pin:Right
@@ -90,8 +89,7 @@ function update_coefs() (
   k_open = 1 - decay_of(g_open);
   k_close = 1 - decay_of(g_close);
 
-  // 上昇／下降の切り替え。fade は割り算に使うので 0 にしない（0 に近いほど、切り替えで目標が飛ぶ）。
-  dir_dead = max(dead_db, 0);
+  // 上昇／下降の切り替えのクロスフェード幅。割り算に使うので 0 にしない（0 に近いほど、切り替えで目標が飛ぶ）。
   dir_fade = max(fade_db, 0.01);
 );
 
@@ -117,7 +115,8 @@ gdb = 0;
 // レベルの上昇／下降の判定用。dir_up=1 は上昇中。lvl_ext は直近の極値（上昇中は最大、下降中は最小）。
 // dir_s は目標を Release(0) ↔ Attack(1) のどちらに寄せるか。上昇中は極値の更新量 / dir_fade ずつ 1 へ、
 // 下降中は 0 へ動く。時間ではなくレベルの動きで進むので、速い立ち上がりでも遅れない。
-// 不感帯 dir_dead と切り替え幅 dir_fade は、スライダーから update_coefs() が決める。
+// 不感帯 dir_dead は 3 dB の固定値。切り替え幅 dir_fade は、スライダーから update_coefs() が決める。
+dir_dead = 3;
 dir_s = 0;
 dir_up = 0;
 lvl_ext = 0;
@@ -241,7 +240,7 @@ function fmt(v dec) local(p r) (
 
 // ---- パラメーター表（スライダー行の宣言と同じ値。5 番の Sync は別扱い） ----
 // 0..4: 最小 最大 既定 刻み log / 5: 小数桁 / 6: 単位 / 7: 短い名前 / 8: 正式名 / 9: ヒント / 10: 0 中心のノブ
-// GUI 用のメモリ配置: PT=64..303（表。1 パラメーター 12 語 × 番号 0..19）, KR=304..383（つまみの範囲）,
+// GUI 用のメモリ配置: PT=64..291（表。1 パラメーター 12 語 × 番号 0..18）, KR=304..379（つまみの範囲）,
 // SY=384..387（SYNC ボタン）, HP=388..423（ハンドル位置）。重ならないよう、ここで一括管理する。
 PT = 64;
 function pdef(i mn mx df st lg dc unit nm fnm hnt bip) local(b) (
@@ -267,8 +266,7 @@ pdef(14, 0.1, 100, 1, 0.1, 1, 1, "ms", "Open", "Gain Smoothing Open", "Smoothing
 pdef(15, 0.1, 500, 15, 0.1, 1, 1, "ms", "Close", "Gain Smoothing Close", "Smoothing time while the gain is closing", 0);
 pdef(16, -90, -30, -90, 1, 0, 0, "dB", "Meter Min", "Meter Min", "Lower limit of the level axis (graph and meters)", 0);
 pdef(17, -60, 0, 0, 1, 0, 0, "dB", "Meter Max", "Meter Max", "Upper limit of the level axis (graph and meters)", 0);
-pdef(18, 0, 10, 1, 0.1, 0, 1, "dB", "Deadband", "Curve Switch Deadband", "Level reversals smaller than this don't switch between the Attack and Release curves", 0);
-pdef(19, 0, 10, 1, 0.1, 0, 1, "dB", "Crossfade", "Curve Switch Crossfade", "How far the level must move after a switch to glide fully onto the other curve", 0);
+pdef(18, 0, 10, 3, 0.1, 0, 1, "dB", "Crossfade", "Curve Switch Crossfade", "How far the level must move after a switch to glide fully onto the other curve", 0);
 
 function pq(i v) local(pmn pmx pst) (
   pmn = pget(i, 0); pmx = pget(i, 1); pst = pget(i, 3);
@@ -399,7 +397,7 @@ function fit_labels() local(i tw th wmax fs) (
   font(5);
   wmax = 1;
   i = 1;
-  loop(19,
+  loop(18,
     i == 1 || i >= 9 ? ( gfx_measurestr(pget(i, 7), tw, th); wmax = max(wmax, tw); );
     i += 1;
   );
@@ -447,8 +445,8 @@ function ui_begin() local(v pad) (
   mg = 14 * S;
   ft_h = 22 * S; ft_y = gfx_h - 8 * S - ft_h;
   kz_h = 92 * S; kz_y = ft_y - 6 * S - kz_h;
-  gg = 10 * S;
-  kw = (gfx_w - 2 * mg - 4 * gg) / 12; // つまみ 12 個、グループの間が 4 か所
+  gg = 16 * S;
+  kw = (gfx_w - 2 * mg - 4 * gg) / 11; // つまみ 11 個、グループの間が 4 か所
   fit_labels();
 
   pl_x = mg + 34 * S;
@@ -879,7 +877,7 @@ function ui_knobs() local(x) (
   x = knob_group("PEAK", 2, 9, 10, 0, x);
   x = knob_group("RMS", 3, 11, 12, 13, x);
   x = knob_group("GAIN SMOOTHING", 2, 14, 15, 0, x);
-  x = knob_group("CURVE SWITCH", 2, 18, 19, 0, x);
+  x = knob_group("CURVE", 1, 18, 0, 0, x);
 );
 
 // ---- ヘッダー（タイトル・凡例・SYNC） ----
