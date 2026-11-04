@@ -29,8 +29,8 @@ JSFX に対応したホストのエフェクト用フォルダに [`jsfx/AZMbezi
 | グループ | つまみ | 内容 |
 | --- | --- | --- |
 | RMS | Sens | RMS の感度。−24〜+24 dB、既定 +6 dB |
-| RMS | Window | RMS の平均時間。1〜200 ms、既定 40 ms |
-| REDUCTION | Range | 最大減衰量。0〜96 dB、既定 40 dB |
+| RMS | Window | RMS の平均時間。1〜200 ms、既定 60 ms |
+| REDUCTION | Range | 最大減衰量。0〜96 dB、既定 60 dB |
 | ATTACK | Time | ゲイン上昇時の追随時間。0.1〜100 ms、既定 10 ms |
 | ATTACK | RMS Ratio | Attack 用の混合比。0% は Peak、100% は RMS。既定 30% |
 | RELEASE | Time | ゲイン下降時の追随時間。0.1〜500 ms、既定 120 ms |
@@ -42,7 +42,7 @@ Peak は感度調整なし（0 dB 固定）です。
 
 ### カーブ欄
 
-グラフ下の段に、Attack（山吹色）と Release（紺）の **Curve／Close／Open** の数値欄があります。ドラッグ（Shift で微調整）で変更でき、クリックすると数値を入力できます。Curve は −100〜+100%（0% は直線）で、既定は Attack が +50%・Close −65 dB・Open −55 dB、Release が −50%・Close −55 dB・Open −40 dB です。SYNC が On の間、Release の欄は薄く表示され、操作できません。SYNC の既定は Off です。
+グラフ下の段に、Attack（山吹色）と Release（紺）の **Curve／Close／Open** の数値欄があります。ドラッグ（Shift で微調整）で変更でき、クリックすると数値を入力できます。Curve は −100〜+100%（0% は直線）で、既定は Attack が +60%・Close −65 dB・Open −55 dB、Release が −60%・Close −55 dB・Open −40 dB です。SYNC が On の間、Release の欄は薄く表示され、操作できません。SYNC の既定は Off です。
 
 ### 表示範囲
 
