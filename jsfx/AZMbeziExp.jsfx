@@ -832,17 +832,26 @@ function setmix(col a) local(r g b) (
   gfx_set(r, g, b, 1);
 );
 
+// グラフの横幅（g_x0 .. g_x0 + g_w）に収めて塗る。
+function bar_rect(x w y h) local(x0 x1) (
+  x0 = max(x, g_x0); x1 = min(x + w, g_x0 + g_w);
+  x1 > x0 ? frect(x0, y, x1 - x0, h);
+);
+
+// 検知レベル raw の見えやすさ（0..1）。グラフの端に近づくと下がり、範囲外では 0。縦棒と曲線の光に使う。
+function bar_vis(raw) ( clamp(min(xpix(raw) - g_x0, g_x0 + g_w - xpix(raw)) / (30 * S), 0, 1); );
+
 // 検知レベルの縦棒。曲線と同じ色・同じ光り方（外側から順に濃くする）で、常に一定。曲線より後ろに描く。
-// 画面端に近づいたら（範囲外では 0 まで）背景へフェードアウトする。
+// 画面端に近づいたら（範囲外では 0 まで）背景へフェードアウトする。光はグラフの外へはみ出さない。
 function draw_bar(col raw) local(x f y0 h) (
-  f = clamp(min(xpix(raw) - g_x0, g_x0 + g_w - xpix(raw)) / (30 * S), 0, 1);
+  f = bar_vis(raw);
   f > 0.01 ? (
     x = xpix(clamp(raw, v_lo, v_hi));
     y0 = pl_y + 4 * S; h = g_b - y0;
-    setmix(col, 0.15 * f); frect(x - 9.25 * S, y0, 18.5 * S, h);
-    setmix(col, 0.30 * f); frect(x - 5.75 * S, y0, 11.5 * S, h);
-    setmix(col, 0.55 * f); frect(x - 3.5 * S, y0, 7 * S, h);
-    setmix(col, f); frect(x - 1.5 * S, y0, 3 * S, h);
+    setmix(col, 0.15 * f); bar_rect(x - 9.25 * S, 18.5 * S, y0, h);
+    setmix(col, 0.30 * f); bar_rect(x - 5.75 * S, 11.5 * S, y0, h);
+    setmix(col, 0.55 * f); bar_rect(x - 3.5 * S, 7 * S, y0, h);
+    setmix(col, f); bar_rect(x - 1.5 * S, 3 * S, y0, h);
   );
 );
 
@@ -880,12 +889,12 @@ function ui_plot() local(inp) (
   !ui_sync ? draw_band();
   draw_markers();
   ui_sync ? (
-    draw_glow(2, C_SYNC, 1);
+    draw_glow(2, C_SYNC, bar_vis(ui_a));
     setc(C_REL, 0.35); curve_path(6, 2 * S);
     draw_curve(2, C_SYNC, 5.5 * S);
   ) : (
-    draw_glow(6, C_REL, 1 - ui_hl);
-    draw_glow(2, C_ATT, ui_hl);
+    draw_glow(6, C_REL, (1 - ui_hl) * bar_vis(ui_r));
+    draw_glow(2, C_ATT, ui_hl * bar_vis(ui_a));
     draw_curve(6, C_REL, 5.5 * S);
     draw_curve(2, C_ATT, 5.5 * S);
   );
