@@ -62,14 +62,27 @@ struct Effect {
     }
 };
 
-static double curve(double level, double close, double open, double shape)
+struct Shape { double x1, y1, x2, y2; };
+static const Shape kAttackShape{0.5, 0.167, 0.833, 0.5};
+static const Shape kReleaseShape{0.167, 0.5, 0.5, 0.833};
+
+static double bezier(double u, double p1, double p2)
+{
+    return u * (3 * (1 - u) * ((1 - u) * p1 + u * p2) + u * u);
+}
+
+static double curve(double level, double close, double open, Shape s, double range = 30)
 {
     double t = (level - close) / (open - close);
-    if (t <= 0) return -30;
+    if (t <= 0) return -range;
     if (t >= 1) return 0;
-    double c = 0.5 + 0.5 * std::clamp(shape * 0.01, -0.999, 0.999);
-    double u = t / (c + std::sqrt(c * c + (1 - 2 * c) * t));
-    return -30 * (1 - (2 * u * (1 - u) * (1 - c) + u * u));
+    double lo = 0, hi = 1;
+    for (int i = 0; i < 100; ++i) {
+        double m = (lo + hi) / 2;
+        (bezier(m, s.x1, s.x2) < t ? lo : hi) = m;
+    }
+    double u = (lo + hi) / 2;
+    return -range * (1 - bezier(u, s.y1, s.y2));
 }
 
 static void compare_reference(double attack_mix, double release_mix, bool sync)
@@ -106,8 +119,8 @@ static void compare_reference(double attack_mix, double release_mix, bool sync)
         prev_dir_a = dir_a_f;
         prev_dir_r = dir_r_f;
         double level = 20 * std::log10(up ? av : rv);
-        double target = up || sync ? curve(level, -70, -60, 50)
-                                   : curve(level, -65, -55, -50);
+        double target = up || sync ? curve(level, -70, -60, kAttackShape)
+                                   : curve(level, -65, -55, kReleaseShape);
         if (i == 0) gain = target;
         else if (gain < target) gain = std::min(target, gain + (target - gain + 1e-9) * open_k);
         else if (gain > target) gain = std::max(target, gain + (target - gain - 1e-9) * close_k);
@@ -246,6 +259,7 @@ static void test_clamping()
     check(e.get(17) - e.get(16) >= 10 - 1e-8, "automated bounds preserve 10 dB span");
 
     Effect upper;
+    upper.set(17, 0);
     upper.set(2, -30); upper.set(3, -20);
     upper.set(6, -25); upper.set(7, -15);
     upper.run(0.001, 0.001);
@@ -304,7 +318,7 @@ static void test_gui_bounds()
     ysfx_gfx_run(e.fx);
     ysfx_gfx_update_mouse(e.fx, 0, x + 40, y, 0, 0, 0);
     ysfx_gfx_run(e.fx);
-    near(e.get(16), -88, 1e-6, "drag meter minimum");
+    near(e.get(16), -73, 1e-6, "drag meter minimum");
     e.run(0.001, 0.001);
 
     ysfx_gfx_update_mouse(e.fx, 0, x, y, 1, 0, 0);
@@ -312,14 +326,14 @@ static void test_gui_bounds()
     ysfx_gfx_update_mouse(e.fx, 0, x, y, 0, 0, 0);
     ysfx_gfx_run(e.fx);
     near(e.var("edit_id"), 16, 0, "click meter minimum opens editor");
-    for (char c : {'-', '5', '0', '\n'}) {
+    for (char c : {'-', '6', '0', '\n'}) {
         ysfx_gfx_add_key(e.fx, 0, c, true);
         ysfx_gfx_run(e.fx);
         ysfx_gfx_add_key(e.fx, 0, c, false);
     }
-    near(e.get(16), -50, 1e-6, "type meter minimum");
-    near(e.get(2), -50, 1e-6, "GUI narrowing clamps attack");
-    near(e.get(6), -50, 1e-6, "GUI narrowing clamps release");
+    near(e.get(16), -60, 1e-6, "type meter minimum");
+    near(e.get(2), -60, 1e-6, "GUI narrowing clamps attack");
+    near(e.get(6), -60, 1e-6, "GUI narrowing clamps release");
     check((ysfx_fetch_slider_automations(e.fx) & (uint64_t(1) << 1)) != 0,
           "GUI clamping notifies automation");
     int right_x = static_cast<int>(e.var("g_x0") + e.var("g_w") - 30);
@@ -342,9 +356,130 @@ static void test_gui_bounds()
         ysfx_gfx_update_mouse(e.fx, 0, plot_x, plot_y, 0, 0, 0);
         ysfx_gfx_run(e.fx);
     }
-    near(e.get(16), -90, 1e-6, "double-click resets minimum");
-    near(e.get(17), 0, 1e-6, "double-click resets maximum");
-    near(e.get(2), -50, 1e-6, "reset does not restore clamped curve");
+    near(e.get(16), -75, 1e-6, "double-click resets minimum");
+    near(e.get(17), -45, 1e-6, "double-click resets maximum");
+    near(e.get(2), -60, 1e-6, "reset does not restore clamped curve");
+}
+
+static void set_shape(Effect &e, int x1, int y1, int x2, int y2, Shape s)
+{
+    e.set(x1, s.x1 * 100); e.set(y1, s.y1 * 100);
+    e.set(x2, s.x2 * 100); e.set(y2, s.y2 * 100);
+}
+
+// The first sample initialises the gain directly to the selected curve's target.
+static void test_curve_shapes()
+{
+    const Shape shapes[] = {
+        {0.1, 0.9, 0.9, 0.1}, {0.9, 0.1, 0.1, 0.9}, {0, 0, 1, 1}, {1, 0, 0, 1},
+        {0.3, 0.8, 0.7, 0.2}, {0, 1, 1, 0}, {0.5, 0.5, 0.5, 0.5}, {1, 1, 0, 0},
+    };
+    for (const Shape &s : shapes) {
+        for (double level_db : {-69.0, -64.0, -62.0, -58.5, -56.0, -51.0, -45.0}) {
+            for (int sync = 0; sync < 2; ++sync) {
+                Effect e;
+                e.set(20, 0);
+                e.set(5, sync);
+                if (sync) set_shape(e, 4, 21, 22, 23, s);
+                else set_shape(e, 8, 24, 25, 26, s);
+                double amplitude = std::pow(10.0, (level_db + 3) / 20);
+                e.run(amplitude, amplitude);
+                double close = sync ? -70 : -65, open = sync ? -60 : -55;
+                double expected = curve(level_db, close, open, s);
+                // x'(u) touches zero for x1=1, x2=0, so the solved u is only accurate to about 1e-4 there.
+                near(e.var("gdb"), expected, s.x1 == 1 && s.x2 == 0 ? 5e-3 : 1e-6,
+                     "S-shaped and extreme curves");
+            }
+        }
+    }
+    double previous = -1e9;
+    for (double level_db = -72; level_db <= -58; level_db += 0.25) {
+        Effect e;
+        e.set(20, 0); e.set(5, 1);
+        set_shape(e, 4, 21, 22, 23, {0.8, 0.0, 0.2, 1.0});
+        double amplitude = std::pow(10.0, (level_db + 3) / 20);
+        e.run(amplitude, amplitude);
+        check(e.var("gdb") >= previous - 1e-9 && e.var("gdb") <= 1e-12 && e.var("gdb") >= -30 - 1e-12,
+              "curve is monotonic and stays within range");
+        previous = e.var("gdb");
+    }
+}
+
+static double shape_handle(const Shape &s, int handle, bool y)
+{
+    double u = handle == 1 ? 1.0 / 3 : 2.0 / 3;
+    return y ? bezier(u, s.y1, s.y2) : bezier(u, s.x1, s.x2);
+}
+
+static void test_handle_drag()
+{
+    Effect e;
+    e.run(0.001, 0.001);
+    std::vector<uint8_t> pixels(800 * 520 * 4);
+    ysfx_gfx_config_t cfg{};
+    cfg.pixel_width = 800; cfg.pixel_height = 520;
+    cfg.pixels = pixels.data(); cfg.scale_factor = 1;
+    ysfx_gfx_setup(e.fx, &cfg);
+    auto mouse = [&](int x, int y, int down) {
+        ysfx_gfx_update_mouse(e.fx, 0, x, y, down, 0, 0);
+        ysfx_gfx_run(e.fx);
+    };
+    mouse(0, 0, 0);
+    auto handle_px = [&](Shape s, int handle, double &px, double &py) {
+        double fx = shape_handle(s, handle, false), fy = shape_handle(s, handle, true);
+        px = e.var("g_x0") + (-65 + fx * 10 - e.var("v_lo")) * e.var("g_w") / e.var("v_span");
+        py = e.var("g_y0") + 30 * (1 - fy) * e.var("g_h") / e.var("y_span");
+    };
+    auto current = [&]() {
+        return Shape{e.get(8) / 100, e.get(24) / 100, e.get(25) / 100, e.get(26) / 100};
+    };
+    auto drag = [&](double px, double py, double dx, double dy) {
+        mouse(int(px), int(py), 1);
+        mouse(int(px + dx / 2), int(py + dy / 2), 1);
+        mouse(int(px + dx), int(py + dy), 1);
+        mouse(int(px + dx), int(py + dy), 0);
+        e.run(0.001, 0.001);
+    };
+    auto valid = [&](Shape s) {
+        for (double v : {s.x1, s.y1, s.x2, s.y2})
+            check(v >= -1e-9 && v <= 1 + 1e-9, "control points stay inside the unit square");
+    };
+
+    double px, py, nx, ny;
+    Shape before = current();
+    handle_px(before, 1, px, py);
+    drag(px, py, 6, -10);
+    Shape after = current();
+    valid(after);
+    handle_px(after, 1, nx, ny);
+    near(nx, px + 6, 0.5, "handle 1 follows the pointer horizontally");
+    near(ny, py - 10, 0.5, "handle 1 follows the pointer vertically");
+    handle_px(before, 2, px, py);
+    handle_px(after, 2, nx, ny);
+    near(nx, px, 0.5, "handle 2 stays in place horizontally");
+    near(ny, py, 0.5, "handle 2 stays in place vertically");
+
+    handle_px(after, 2, px, py);
+    drag(px, py, 600, -600);
+    valid(current());
+    handle_px(current(), 2, px, py);
+    drag(px, py, -600, 600);
+    valid(current());
+    handle_px(current(), 1, px, py);
+    drag(px, py, 600, 600);
+    valid(current());
+    handle_px(current(), 1, px, py);
+    drag(px, py, -600, -600);
+    valid(current());
+
+    handle_px(current(), 2, px, py);
+    for (int click = 0; click < 2; ++click) {
+        mouse(int(px), int(py), 1);
+        mouse(int(px), int(py), 0);
+    }
+    Shape reset = current();
+    near(reset.x1, kReleaseShape.x1, 1e-9, "double-click resets the curve");
+    near(reset.y2, kReleaseShape.y2, 1e-9, "double-click resets the curve");
 }
 
 int main()
@@ -361,5 +496,7 @@ int main()
     test_legacy_controls_do_not_affect_audio();
     test_old_state();
     test_gui_bounds();
+    test_curve_shapes();
+    test_handle_drag();
     std::puts("ysfx integration tests passed");
 }
