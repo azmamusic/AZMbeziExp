@@ -511,15 +511,16 @@ function cseg(x0 y0 x1 y1 th) local(t r l n k xx yy) (
   );
 );
 
-function draw_grid() local(k x y raw step g dec every db first n) (
-  setc(C_PLOT, 1);
-  rrect(pl_x, pl_y, pl_w, pl_h, 12 * S);
+// over=1: 光（不透明の混色）の上に線だけ半透明で描き直し、光の後ろにある罫線を透けさせる。
+function draw_grid(over) local(k x y raw step g dec every db first n la) (
+  la = over ? 0.5 : 1;
+  !over ? ( setc(C_PLOT, 1); rrect(pl_x, pl_y, pl_w, pl_h, 12 * S); );
 
   // 縦線: 入力レベル。範囲に応じて 1/2/5/10/20 dB 刻み
   raw = v_span / 8;
   step = raw < 1.5 ? 1 : (raw < 3.5 ? 2 : (raw < 7.5 ? 5 : (raw < 15 ? 10 : 20)));
   every = g_w * step / v_span < 30 * S ? 2 : 1;
-  font(4);
+  !over ? font(4);
   first = ceil(v_lo / step - 0.0001);
   n = floor(v_span / step + 0.0001);
   k = 0;
@@ -527,9 +528,9 @@ function draw_grid() local(k x y raw step g dec every db first n) (
     db = (first + k) * step;
     db <= v_hi + 0.001 ? (
       x = rnd(xpix(db));
-      setc(abs(db) % 10 == 0 ? C_GRID2 : C_GRID, 1);
+      setc(abs(db) % 10 == 0 ? C_GRID2 : C_GRID, la);
       gfx_line(x, pl_y + 4 * S, x, g_b + 4 * S, 0);
-      (first + k) % every == 0 && x > g_x0 - 4 * S && x < g_x0 + g_w + 4 * S ? (
+      !over && (first + k) % every == 0 && x > g_x0 - 4 * S && x < g_x0 + g_w + 4 * S ? (
         setc(C_DIM, 1);
         txt(fmt(db, 0), x - 20 * S, g_b + 8 * S, 40 * S, 13 * S, 1);
       );
@@ -546,10 +547,12 @@ function draw_grid() local(k x y raw step g dec every db first n) (
   g = 0;
   while (g <= y_span + 0.0001) (
     y = rnd(ypix(-g));
-    setc(g == 0 ? C_GRID2 : C_GRID, 1);
+    setc(g == 0 ? C_GRID2 : C_GRID, la);
     gfx_line(clip_l, y, pl_x + pl_w - 2 * S, y, 0);
-    setc(C_DIM, 1);
-    txt(fmt(-g, dec), pl_x + 4 * S, y - 7 * S, g_x0 - pl_x - 12 * S, 14 * S, 2 | 4);
+    !over ? (
+      setc(C_DIM, 1);
+      txt(fmt(-g, dec), pl_x + 4 * S, y - 7 * S, g_x0 - pl_x - 12 * S, 14 * S, 2 | 4);
+    );
     g += step;
   );
 );
@@ -843,15 +846,17 @@ function bar_vis(raw) ( clamp(min(xpix(raw) - g_x0, g_x0 + g_w - xpix(raw)) / (3
 
 // 検知レベルの縦棒。曲線と同じ色・同じ光り方（外側から順に濃くする）で、常に一定。曲線より後ろに描く。
 // 画面端に近づいたら（範囲外では 0 まで）背景へフェードアウトする。光はグラフの外へはみ出さない。
+// 曲線の光の上に重なっても透けるよう半透明で描く。入れ子の矩形の合成結果が不透明の混色（0.15/0.30/0.55/1）と
+// 一致するよう、層ごとの不透明度を補正している。
 function draw_bar(col raw) local(x f y0 h) (
   f = bar_vis(raw);
   f > 0.01 ? (
     x = xpix(clamp(raw, v_lo, v_hi));
     y0 = pl_y + 4 * S; h = g_b - y0;
-    setmix(col, 0.15 * f); bar_rect(x - 9.25 * S, 18.5 * S, y0, h);
-    setmix(col, 0.30 * f); bar_rect(x - 5.75 * S, 11.5 * S, y0, h);
-    setmix(col, 0.55 * f); bar_rect(x - 3.5 * S, 7 * S, y0, h);
-    setmix(col, f); bar_rect(x - 1.5 * S, 3 * S, y0, h);
+    setc(col, 0.15 * f); bar_rect(x - 9.25 * S, 18.5 * S, y0, h);
+    setc(col, 0.15 * f / (1 - 0.15 * f)); bar_rect(x - 5.75 * S, 11.5 * S, y0, h);
+    setc(col, 0.25 * f / (1 - 0.30 * f)); bar_rect(x - 3.5 * S, 7 * S, y0, h);
+    setc(col, 0.45 * f / (1 - 0.55 * f)); bar_rect(x - 1.5 * S, 3 * S, y0, h);
   );
 );
 
@@ -885,16 +890,20 @@ function ui_plot() local(inp) (
   drag_id >= 100 && drag_id < 200 && lmb ? drag_handle();
   hov_h && hov_h < 150 && !lmb && wh != 0 ? ( wheel_param(hov_h - 100, wh); wh = 0; );
 
-  draw_grid();
+  draw_grid(0);
   !ui_sync ? draw_band();
-  draw_markers();
   ui_sync ? (
     draw_glow(2, C_SYNC, bar_vis(ui_a));
-    setc(C_REL, 0.35); curve_path(6, 2 * S);
-    draw_curve(2, C_SYNC, 5.5 * S);
   ) : (
     draw_glow(6, C_REL, (1 - ui_hl) * bar_vis(ui_r));
     draw_glow(2, C_ATT, ui_hl * bar_vis(ui_a));
+  );
+  draw_grid(1);
+  draw_markers();
+  ui_sync ? (
+    setc(C_REL, 0.35); curve_path(6, 2 * S);
+    draw_curve(2, C_SYNC, 5.5 * S);
+  ) : (
     draw_curve(6, C_REL, 5.5 * S);
     draw_curve(2, C_ATT, 5.5 * S);
   );
