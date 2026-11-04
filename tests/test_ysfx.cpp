@@ -44,6 +44,8 @@ struct Effect {
         check(p != nullptr, name);
         return *p;
     }
+    // GUI 座標の変数はスーパーサンプリング後の座標なので、マウス座標へ戻す
+    double px(const char *name) { return var(name) / var("SS"); }
     void set_var(const char *name, double value)
     {
         auto *p = ysfx_find_var(fx, name);
@@ -301,7 +303,7 @@ static void test_gui_bounds()
     e.set(14, 10);
     e.set(15, 20);
     for (int knob_x : {454, 651}) {
-        int knob_y = static_cast<int>(e.var("kz_y") + 49);
+        int knob_y = static_cast<int>(e.px("kz_y") + 49);
         for (int click = 0; click < 2; ++click) {
             ysfx_gfx_update_mouse(e.fx, 0, knob_x, knob_y, 1, 0, 0);
             ysfx_gfx_run(e.fx);
@@ -324,8 +326,8 @@ static void test_gui_bounds()
         }
         std::fclose(file);
     }
-    int x = static_cast<int>(e.var("g_x0") + 30);
-    int y = static_cast<int>(e.var("pl_b") + 13);
+    int x = static_cast<int>(e.px("g_x0") + 30);
+    int y = static_cast<int>(e.px("pl_b") + 13);
     ysfx_gfx_update_mouse(e.fx, 0, x, y, 1, 0, 0);
     ysfx_gfx_run(e.fx);
     ysfx_gfx_update_mouse(e.fx, 0, x + 40, y, 1, 0, 0);
@@ -350,7 +352,7 @@ static void test_gui_bounds()
     near(e.get(6), -60, 1e-6, "GUI narrowing clamps release");
     check((ysfx_fetch_slider_automations(e.fx) & (uint64_t(1) << 1)) != 0,
           "GUI clamping notifies automation");
-    int right_x = static_cast<int>(e.var("g_x0") + e.var("g_w") - 30);
+    int right_x = static_cast<int>(e.px("g_x0") + e.px("g_w") - 30);
     ysfx_gfx_update_mouse(e.fx, 0, right_x, y, 1, 0, 0);
     ysfx_gfx_run(e.fx);
     ysfx_gfx_update_mouse(e.fx, 0, right_x, y, 0, 0, 0);
@@ -362,8 +364,8 @@ static void test_gui_bounds()
         ysfx_gfx_add_key(e.fx, 0, c, false);
     }
     near(e.get(17), -40, 1e-6, "type meter maximum");
-    int plot_x = static_cast<int>(e.var("pl_x") + e.var("pl_w") * 0.7);
-    int plot_y = static_cast<int>(e.var("pl_y") + e.var("pl_h") * 0.5);
+    int plot_x = static_cast<int>(e.px("pl_x") + e.px("pl_w") * 0.7);
+    int plot_y = static_cast<int>(e.px("pl_y") + e.px("pl_h") * 0.5);
     for (int click = 0; click < 2; ++click) {
         ysfx_gfx_update_mouse(e.fx, 0, plot_x, plot_y, 1, 0, 0);
         ysfx_gfx_run(e.fx);
@@ -441,8 +443,8 @@ static void test_handle_drag()
     mouse(0, 0, 0);
     auto handle_px = [&](Shape s, int handle, double &px, double &py) {
         double fx = shape_handle(s, handle, false), fy = shape_handle(s, handle, true);
-        px = e.var("g_x0") + (-65 + fx * 10 - e.var("v_lo")) * e.var("g_w") / e.var("v_span");
-        py = e.var("g_y0") + 30 * (1 - fy) * e.var("g_h") / e.var("y_span");
+        px = e.px("g_x0") + (-65 + fx * 10 - e.var("v_lo")) * e.px("g_w") / e.var("v_span");
+        py = e.px("g_y0") + 30 * (1 - fy) * e.px("g_h") / e.var("y_span");
     };
     auto current = [&]() {
         return Shape{e.get(8) / 100, e.get(24) / 100, e.get(25) / 100, e.get(26) / 100};
