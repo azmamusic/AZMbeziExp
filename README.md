@@ -44,9 +44,9 @@ JSFX に対応したホストのエフェクト用フォルダに [`jsfx/AZMbezi
 | --- | --- | --- |
 | DETECTION | Sens | RMS の感度。−24〜+24 dB、既定 +6 dB |
 | DETECTION | Window | RMS の平均時間。1〜200 ms、既定 60 ms |
-| ATTACK | RMS Ratio | Attack 用の混合比。0% は Peak、100% は RMS。既定 30% |
-| ATTACK | Smoothing Time | ゲインが上がるときの平滑化時間。0.1〜100 ms、既定 10 ms |
-| RELEASE | RMS Ratio | Release 用の混合比。0% は Peak、100% は RMS。既定 60% |
+| ATTACK | RMS Ratio | Attack 用の混合比。0% は Peak、100% は RMS。既定 15% |
+| ATTACK | Smoothing Time | ゲインが上がるときの平滑化時間。0.1〜100 ms、既定 4 ms |
+| RELEASE | RMS Ratio | Release 用の混合比。0% は Peak、100% は RMS。既定 75% |
 | RELEASE | Smoothing Time | ゲインが下がるときの平滑化時間。0.1〜500 ms、既定 120 ms |
 
 Peak は感度調整なし（0 dB 固定）です。つまみやハンドルはドラッグ、ホイール、右クリックでの数値入力ができます。Shift は微調整、ダブルクリックまたは Ctrl+クリックは既定値へのリセットです。
