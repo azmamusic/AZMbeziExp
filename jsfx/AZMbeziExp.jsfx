@@ -8,19 +8,19 @@ tags:gate expander dynamics vocal
 options:no_meter
 
 slider1:range_db=60<0,96,0.1>-Reduction (dB)
-slider2:a_rng=10<0.1,60,0.1>-Attack Curve Range below Open (dB)
-slider3:a_open=-55<-90,0,0.1>-Attack Curve Open (dB)
-slider4:a_curve=60<-100,100,1>-Attack Curve (%)
+slider2:a_rng=12<0.1,60,0.1>-Attack Curve Range below Open (dB)
+slider3:a_open=-50<-90,0,0.1>-Attack Curve Open (dB)
+slider4:a_curve=70<-100,100,1>-Attack Curve (%)
 slider5:curve_sync=0<0,1,1{Off,On}>-Sync Attack/Release Curves
-slider6:r_close=-55<-90,0,0.1>-Release Curve Close (dB)
-slider7:r_rng=15<0.1,60,0.1>-Release Curve Range above Close (dB)
-slider8:r_curve=-60<-100,100,1>-Release Curve (%)
+slider6:r_close=-50<-90,0,0.1>-Release Curve Close (dB)
+slider7:r_rng=12<0.1,60,0.1>-Release Curve Range above Close (dB)
+slider8:r_curve=-70<-100,100,1>-Release Curve (%)
 slider9:rms_sens=6<-24,24,0.1>-RMS Sensitivity (dB)
 slider10:rms_time=60<1,200,1:log>-RMS Window (ms)
-slider11:g_open=10<0.1,100,0.1:log>-Attack Smoothing Time (ms)
+slider11:g_open=4<0.1,100,0.1:log>-Attack Smoothing Time (ms)
 slider12:g_close=120<0.1,500,0.1:log>-Release Smoothing Time (ms)
-slider13:attack_mix=30<0,100,1>-Attack RMS Ratio (%)
-slider14:release_mix=60<0,100,1>-Release RMS Ratio (%)
+slider13:attack_mix=15<0,100,1>-Attack RMS Ratio (%)
+slider14:release_mix=75<0,100,1>-Release RMS Ratio (%)
 slider15:bypass=0<0,1,1{Off,On}>-Bypass
 slider16:rms_open=0<0,1,1{Closed,Open}>-RMS Control Open
 
