@@ -236,6 +236,20 @@ static void test_old_state()
     near(e.get(20), 100, 0, "new release ratio defaults");
 }
 
+static void test_bypass()
+{
+    Effect e;
+    double l = 0;
+    for (int i = 0; i < 2000; ++i) l = e.run(0.001, 0.001);
+    check(std::abs(l) < 0.001 * 0.5, "expander attenuates quiet input");
+    e.set(27, 1);
+    for (int i = 0; i < 4800; ++i) l = e.run(0.001, 0.001);
+    near(l, 0.001, 1e-9, "bypass passes input through");
+    e.set(27, 0);
+    for (int i = 0; i < 4800; ++i) l = e.run(0.001, 0.001);
+    check(std::abs(l) < 0.001 * 0.5, "bypass off restores processing");
+}
+
 static void test_clamping()
 {
     Effect e;
@@ -495,6 +509,7 @@ int main()
     test_block_sizes();
     test_legacy_controls_do_not_affect_audio();
     test_old_state();
+    test_bypass();
     test_gui_bounds();
     test_curve_shapes();
     test_handle_drag();
