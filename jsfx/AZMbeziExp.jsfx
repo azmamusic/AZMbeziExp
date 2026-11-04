@@ -117,6 +117,8 @@ ui_dirty = 0;
 // EEL2 の識別子は大文字小文字を区別しない（S と s は同じ）ので、S を使う関数に s という名前の引数は付けない。
 
 ui_a = ui_r = -120; // 合成後の検知レベル（dB）。Attack 側・Release 側
+TH = 1100; TN = 6; // 検知レベルの履歴（残像用）。TH[i*2] = Attack, TH[i*2+1] = Release（i=0 が最新）
+memset(TH, -120, TN * 2);
 ui_hl = 0; // Attack 側がアクティブなら 1 に寄る（ハイライトのなめらかな切り替え用）
 ui_axis_init = 0;
 t_prev = time_precise();
@@ -433,6 +435,8 @@ function ui_begin() (
   // audio スレッドが貯めた最大値を取り込む。ui_hl は Attack 側がアクティブなときに 1 へ寄る。
   ui_a = det_db(m_a, ui_a); m_a = 0;
   ui_r = det_db(m_r, ui_r); m_r = 0;
+  memcpy(TH + 2, TH, (TN - 1) * 2);
+  TH[0] = ui_a; TH[1] = ui_r;
   ui_hl += (m_up - ui_hl) * (1 - exp(-dt * 20));
 
   update_axis();
@@ -442,7 +446,7 @@ function ui_begin() (
   mg = 44 * S; // 全パーツ共通の左右余白（ヘッダー、グラフ、リダクションメーター、欄、RMS CONTROL、フッターの端をそろえる）
   ft_h = 22 * S; ft_y = ui_h - 18 * S - ft_h;
   rms_on = rms_open >= 0.5;
-  sec_h = (rms_on ? 98 : 22) * S;
+  sec_h = (rms_on ? 104 : 22) * S;
   kz_y = ft_y - 6 * S - sec_h; // RMS Control セクションの上端
   kg_y = kz_y + 20 * S; // グループ名の行
   gg = 16 * S;
@@ -833,34 +837,31 @@ function setmix(col a) local(r g b) (
 );
 
 // 検知レベルの縦棒。hl（0..1）が高いほど、いま目標ゲインを決めている側として強調する。
-// 棒がカーブと交わる点が、その側の目標ゲイン。
-function draw_marker(col raw b hl name chip_y) local(lvl x yg r a w h cx tw th) (
-  lvl = clamp(raw, v_lo, v_hi);
-  x = xpix(lvl);
-  a = 0.4 + 0.6 * hl;
-  setc(col, 0.14 * hl); frect(x - 5 * S, pl_y + 4 * S, 10 * S, g_b - pl_y);
-  setc(col, a); frect(x - (0.7 + 0.8 * hl) * S, pl_y + 4 * S, (1.4 + 1.6 * hl) * S, g_b - pl_y);
-  yg = ypix(clamp(gain_at(b, lvl), -y_span, 0));
-  r = (3.5 + 3.5 * hl) * S;
-  hl > 0.05 ? ( setc(col, 0.25 * hl); gfx_circle(x, yg, r + 5 * S, 1, 1); );
-  setc(C_PLOT, 1); gfx_circle(x, yg, r + 2 * S, 1, 1);
-  setmix(col, a); gfx_circle(x, yg, r, 1, 1);
+// 画面端に近づいたら（範囲外では 0 まで）フェードアウトする。al は全体の濃さ。
+function draw_bar(col raw hl al) local(x f a) (
+  f = clamp(min(xpix(raw) - g_x0, g_x0 + g_w - xpix(raw)) / (30 * S), 0, 1) * al;
+  f > 0.01 ? (
+    x = xpix(clamp(raw, v_lo, v_hi));
+    a = 0.4 + 0.6 * hl;
+    setc(col, 0.14 * hl * f); frect(x - 5 * S, pl_y + 4 * S, 10 * S, g_b - pl_y);
+    setc(col, a * f); frect(x - (0.7 + 0.8 * hl) * S, pl_y + 4 * S, (1.4 + 1.6 * hl) * S, g_b - pl_y);
+  );
+);
 
-  strcpy(#chip, name);
-  strcat(#chip, " ");
-  strcat(#chip, raw > -100 ? fmt(raw, 1) : "-inf");
-  font(4);
-  gfx_measurestr(#chip, tw, th);
-  w = tw + 14 * S; h = 15 * S;
-  cx = clamp(x - w * 0.5, g_x0, g_x0 + g_w - w);
-  setmix(col, 0.3 + 0.7 * hl); rrect(cx, chip_y, w, h, h * 0.5);
-  hl > 0.5 ? setc(C_TEXT, 1) : setc(C_FAINT, 1);
-  txt(#chip, cx, chip_y, w, h, 1 | 4);
+// 過去 TN フレームの位置を薄く残す（残像）。i=0 が現在、i が大きいほど古い。w=0 が Attack、1 が Release。
+function draw_trail(col w hl) local(i) (
+  i = TN - 1;
+  loop(TN - 1,
+    draw_bar(col, TH[i * 2 + w], hl, 0.35 * (1 - i / TN));
+    i -= 1;
+  );
 );
 
 function draw_markers() (
-  draw_marker(C_ATT, ui_a, 2, ui_hl, "ATTACK", pl_y + 32 * S);
-  draw_marker(C_REL, ui_r, ui_sync ? 2 : 6, 1 - ui_hl, "RELEASE", pl_y + 50 * S);
+  draw_trail(C_ATT, 0, ui_hl);
+  draw_trail(C_REL, 1, 1 - ui_hl);
+  draw_bar(C_ATT, ui_a, ui_hl, 1);
+  draw_bar(C_REL, ui_r, 1 - ui_hl, 1);
 );
 
 function ui_plot() local(inp) (
@@ -959,9 +960,9 @@ function knob_slot(i sx sy sw sh) local(hot act ed ined n cx cy rad vy tw th) (
   hot || act ? ( setc(C_SLOT, 1); rrect(sx + 1 * S, sy, sw - 2 * S, sh - 4 * S, 8 * S); );
   font(7); setc(C_TEXT, 1);
   txt(pget(i, 7), sx, sy + 2 * S, sw, 12 * S, 1 | 4);
-  rad = 13 * S; cx = sx + sw * 0.5; cy = sy + 16 * S + rad;
+  rad = 13 * S; cx = sx + sw * 0.5; cy = sy + 19 * S + rad;
   knob_draw(cx, cy, rad, n, pget(i, 10), hot, act);
-  vy = sy + 16 * S + 2 * rad + 3 * S;
+  vy = sy + 19 * S + 2 * rad + 3 * S;
   ed ? edit_box(sx + 3 * S, vy, sw - 6 * S, 15 * S) : (
     strcpy(#kv, fmt(slider(i), pget(i, 5)));
     strcat(#kv, " ");
@@ -980,7 +981,7 @@ function knob_group(title col p0 p1 x) local(k p tw th) (
   k = 0;
   loop(2,
     p = k == 0 ? p0 : p1;
-    knob_slot(p, x + k * kw, kg_y + 14 * S, kw, 62 * S);
+    knob_slot(p, x + k * kw, kg_y + 16 * S, kw, 65 * S);
     k += 1;
   );
   x + 2 * kw + gg;

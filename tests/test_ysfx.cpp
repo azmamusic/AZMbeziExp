@@ -401,6 +401,47 @@ static void test_axis_and_screenshot()
     }
 }
 
+// Detection bars: line only (no labels), a short afterimage trail, and fade-out near the graph edge.
+static void test_detection_bars()
+{
+    Gui e;
+    e.settle();
+    auto red = [&](double x, double y) { return int(e.pixels[(size_t(y) * 940 + size_t(x)) * 4 + 2]); };
+    // The displayed level decays slightly between frames, so positions are read back after each frame.
+    auto frame = [&](double a) {
+        e.set_var("m_a", 0); e.set_var("m_r", 0);
+        e.set_var("ui_a", a); e.set_var("ui_r", -120);
+        e.set_var("m_up", 1); e.set_var("ui_hl", 1);
+        e.mouse(0, 0, 0);
+        return e.xpix(e.var("ui_a"));
+    };
+    double y = e.px("pl_y") + 120;
+
+    double x1 = frame(-47);
+    int bar = red(x1, y);
+    check(bar > 150, "attack bar is drawn at the detected level");
+    check(red(x1 + 15, e.px("pl_y") + 32 + 7) < 100, "no label chip next to the bar");
+
+    double x2 = frame(-37);
+    double ts[4];
+    ysfx_read_vmem(e.fx, uint32_t(e.var("TH")), ts, 4);
+    near(ts[0], e.var("ui_a"), 1e-9, "newest history entry is the current attack level");
+    near(ts[2], -47, 0.5, "previous attack level is kept for the trail");
+    int ghost = red(x1, y);
+    check(ghost > 50 && ghost < bar, "previous position remains as a faint afterimage");
+    check(red(x2, y) > ghost, "current bar is brighter than its afterimage");
+
+    for (int i = 0; i < 12; ++i) x2 = frame(-37);
+    check(red(x1, y) < 60, "afterimage disappears after a few frames");
+
+    frame(e.var("v_lo") - 5);
+    check(red(e.px("g_x0"), y) < 100, "bar outside the graph is not drawn at the edge");
+    double x3 = frame(e.var("v_lo") + 2);
+    int near_edge = red(x3, y);
+    double x4 = frame(-47);
+    check(near_edge < red(x4, y), "bar fades out as it approaches the edge");
+}
+
 static void test_range_field()
 {
     Gui e;
@@ -584,6 +625,7 @@ int main()
     test_defaults();
     test_curve_shapes();
     test_axis_and_screenshot();
+    test_detection_bars();
     test_range_field();
     test_collapse_and_knobs();
     test_handle_drag();
