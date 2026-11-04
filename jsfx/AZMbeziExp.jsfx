@@ -3,17 +3,16 @@ tags:gate expander dynamics vocal
 
 options:no_meter
 
-// 先頭の "-" は generic UI で非表示にする指定（パラメーターとしては残る）。
-slider1:range_db=40<0,96,0.1>-Range (dB)
+slider1:range_db=60<0,96,0.1>-Range (dB)
 slider2:a_close=-65<-90,0,0.1>-Attack Curve Close (dB)
 slider3:a_open=-55<-90,0,0.1>-Attack Curve Open (dB)
-slider4:a_curve=50<-100,100,1>-Attack Curve (%)
+slider4:a_curve=60<-100,100,1>-Attack Curve (%)
 slider5:curve_sync=0<0,1,1{Off,On}>-Sync Attack/Release Curves
 slider6:r_close=-55<-90,0,0.1>-Release Curve Close (dB)
 slider7:r_open=-40<-90,0,0.1>-Release Curve Open (dB)
-slider8:r_curve=-50<-100,100,1>-Release Curve (%)
+slider8:r_curve=-60<-100,100,1>-Release Curve (%)
 slider9:rms_sens=6<-24,24,0.1>-RMS Sensitivity (dB)
-slider10:rms_time=40<1,200,1:log>-RMS Window (ms)
+slider10:rms_time=60<1,200,1:log>-RMS Window (ms)
 slider11:g_open=10<0.1,100,0.1:log>-Attack Time (ms)
 slider12:g_close=120<0.1,500,0.1:log>-Release Time (ms)
 slider13:meter_lo=-75<-90,-30,0.1>-Meter Min (dB)
