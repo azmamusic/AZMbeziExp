@@ -259,6 +259,7 @@ static void test_clamping()
     check(e.get(17) - e.get(16) >= 10 - 1e-8, "automated bounds preserve 10 dB span");
 
     Effect upper;
+    upper.set(17, 0);
     upper.set(2, -30); upper.set(3, -20);
     upper.set(6, -25); upper.set(7, -15);
     upper.run(0.001, 0.001);
@@ -317,7 +318,7 @@ static void test_gui_bounds()
     ysfx_gfx_run(e.fx);
     ysfx_gfx_update_mouse(e.fx, 0, x + 40, y, 0, 0, 0);
     ysfx_gfx_run(e.fx);
-    near(e.get(16), -88, 1e-6, "drag meter minimum");
+    near(e.get(16), -73, 1e-6, "drag meter minimum");
     e.run(0.001, 0.001);
 
     ysfx_gfx_update_mouse(e.fx, 0, x, y, 1, 0, 0);
@@ -325,14 +326,14 @@ static void test_gui_bounds()
     ysfx_gfx_update_mouse(e.fx, 0, x, y, 0, 0, 0);
     ysfx_gfx_run(e.fx);
     near(e.var("edit_id"), 16, 0, "click meter minimum opens editor");
-    for (char c : {'-', '5', '0', '\n'}) {
+    for (char c : {'-', '6', '0', '\n'}) {
         ysfx_gfx_add_key(e.fx, 0, c, true);
         ysfx_gfx_run(e.fx);
         ysfx_gfx_add_key(e.fx, 0, c, false);
     }
-    near(e.get(16), -50, 1e-6, "type meter minimum");
-    near(e.get(2), -50, 1e-6, "GUI narrowing clamps attack");
-    near(e.get(6), -50, 1e-6, "GUI narrowing clamps release");
+    near(e.get(16), -60, 1e-6, "type meter minimum");
+    near(e.get(2), -60, 1e-6, "GUI narrowing clamps attack");
+    near(e.get(6), -60, 1e-6, "GUI narrowing clamps release");
     check((ysfx_fetch_slider_automations(e.fx) & (uint64_t(1) << 1)) != 0,
           "GUI clamping notifies automation");
     int right_x = static_cast<int>(e.var("g_x0") + e.var("g_w") - 30);
@@ -355,9 +356,9 @@ static void test_gui_bounds()
         ysfx_gfx_update_mouse(e.fx, 0, plot_x, plot_y, 0, 0, 0);
         ysfx_gfx_run(e.fx);
     }
-    near(e.get(16), -90, 1e-6, "double-click resets minimum");
-    near(e.get(17), 0, 1e-6, "double-click resets maximum");
-    near(e.get(2), -50, 1e-6, "reset does not restore clamped curve");
+    near(e.get(16), -75, 1e-6, "double-click resets minimum");
+    near(e.get(17), -45, 1e-6, "double-click resets maximum");
+    near(e.get(2), -60, 1e-6, "reset does not restore clamped curve");
 }
 
 static void set_shape(Effect &e, int x1, int y1, int x2, int y2, Shape s)

@@ -20,8 +20,8 @@ slider12:rms_time=20<1,200,1:log>-RMS Window (ms)
 slider13:rms_rel=60<1,1000,1:log>-Legacy RMS Release (unused)
 slider14:g_open=4<0.1,100,0.1:log>-Attack Time (ms)
 slider15:g_close=80<0.1,500,0.1:log>-Release Time (ms)
-slider16:meter_lo=-90<-90,-30,0.1>-Meter Min (dB)
-slider17:meter_hi=0<-60,0,0.1>-Meter Max (dB)
+slider16:meter_lo=-75<-90,-30,0.1>-Meter Min (dB)
+slider17:meter_hi=-45<-60,0,0.1>-Meter Max (dB)
 slider18:fade_db=3<0,10,0.1>-Legacy Crossfade (unused)
 slider19:attack_mix=0<0,100,1>-Attack RMS Ratio (%)
 slider20:release_mix=100<0,100,1>-Release RMS Ratio (%)
@@ -270,8 +270,8 @@ pdef(11, -24, 24, 0, 0.1, 0, 1, "dB", "RMS Sens", "RMS Sensitivity", "Gain on th
 pdef(12, 1, 200, 20, 1, 1, 0, "ms", "RMS Window", "RMS Window", "Averaging time of the RMS detector", 0);
 pdef(14, 0.1, 100, 4, 0.1, 1, 1, "ms", "Time", "Attack Time", "Gain smoothing time while opening", 0);
 pdef(15, 0.1, 500, 80, 0.1, 1, 1, "ms", "Time", "Release Time", "Gain smoothing time while closing", 0);
-pdef(16, -90, -30, -90, 0.1, 0, 1, "dB", "Meter Min", "Meter Min", "Drag or click to edit. Narrowing clamps both curves", 0);
-pdef(17, -60, 0, 0, 0.1, 0, 1, "dB", "Meter Max", "Meter Max", "Drag or click to edit. Narrowing clamps both curves", 0);
+pdef(16, -90, -30, -75, 0.1, 0, 1, "dB", "Meter Min", "Meter Min", "Drag or click to edit. Narrowing clamps both curves", 0);
+pdef(17, -60, 0, -45, 0.1, 0, 1, "dB", "Meter Max", "Meter Max", "Drag or click to edit. Narrowing clamps both curves", 0);
 pdef(19, 0, 100, 0, 1, 0, 0, "%", "RMS Ratio", "Attack RMS Ratio", "0% follows Peak; 100% follows RMS", 0);
 pdef(20, 0, 100, 100, 1, 0, 0, "%", "RMS Ratio", "Release RMS Ratio", "0% follows Peak; 100% follows RMS", 0);
 
