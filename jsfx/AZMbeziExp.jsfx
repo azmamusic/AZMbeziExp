@@ -1,4 +1,4 @@
-desc:AzmBezierGate
+desc:AZMbeziExp
 tags:gate expander dynamics vocal
 
 // カーブ編集型のフルバンド・ゲート/エキスパンダー（歌声向け試作）。
@@ -968,8 +968,8 @@ function sync_pill(x y w h) local(hot) (
 
 function ui_header() local(x tw th w1 w2 hh lw) (
   font(3); setc(C_TEXT, 1);
-  gfx_measurestr("AzmBezierGate", tw, th);
-  txt("AzmBezierGate", mg + 2 * S, 8 * S, tw + 4 * S, 28 * S, 4);
+  gfx_measurestr("AZMbeziExp", tw, th);
+  txt("AZMbeziExp", mg + 2 * S, 8 * S, tw + 4 * S, 28 * S, 4);
   strcpy(#lg1, ui_sync ? "Attack = Release" : "Attack");
   strcpy(#lg2, ui_sync ? "Release (kept)" : "Release");
   font(5);

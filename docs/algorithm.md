@@ -1,6 +1,6 @@
 # アルゴリズム
 
-[`jsfx/AzmBezierGate.jsfx`](../jsfx/AzmBezierGate.jsfx) の信号処理と表示を説明します。
+[`jsfx/AZMbeziExp.jsfx`](../jsfx/AZMbeziExp.jsfx) の信号処理と表示を説明します。
 
 ![ステレオ入力から Peak・RMS 検知、方向判定、カーブ、ゲイン追随を経て出力する信号経路](algorithm-flow.svg)
 

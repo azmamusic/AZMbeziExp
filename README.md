@@ -1,14 +1,14 @@
-# AzmBezierGate
+# AZMbeziExp
 
 歌声の入り方や語尾を整える、カーブ編集式のゲート／エキスパンダーです。小さな音を抑えながら、歌い出しや語尾に合わせてゲートの開き方を調整できます。
 
 音量の上昇と下降にそれぞれカーブを設定し、Peak と RMS の混合比や追随時間を独立して調整できます。フルバンド・ステレオリンクで処理し、ルックアヘッドによる遅延はありません。
 
-![AzmBezierGate の画面。Attack と Release のカーブ、メーター、各つまみを表示](docs/gui.png)
+![AZMbeziExp の画面。Attack と Release のカーブ、メーター、各つまみを表示](docs/gui.png)
 
 ## 導入
 
-JSFX に対応したホストのエフェクト用フォルダに [`jsfx/AzmBezierGate.jsfx`](jsfx/AzmBezierGate.jsfx) をコピーし、エフェクトとして追加します。フォルダの場所や追加方法は、使用するホストの案内を参照してください。
+JSFX に対応したホストのエフェクト用フォルダに [`jsfx/AZMbeziExp.jsfx`](jsfx/AZMbeziExp.jsfx) をコピーし、エフェクトとして追加します。フォルダの場所や追加方法は、使用するホストの案内を参照してください。
 
 ## 使い方
 

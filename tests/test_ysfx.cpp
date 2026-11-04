@@ -29,7 +29,7 @@ struct Effect {
 
     Effect()
     {
-        check(ysfx_load_file(fx, "jsfx/AzmBezierGate.jsfx", 0), "load JSFX");
+        check(ysfx_load_file(fx, "jsfx/AZMbeziExp.jsfx", 0), "load JSFX");
         check(ysfx_compile(fx, 0), "compile JSFX including GUI");
         ysfx_set_sample_rate(fx, 48000);
         ysfx_set_block_size(fx, 1);

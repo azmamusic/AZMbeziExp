@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1000" height="430" viewBox="0 0 1000 430" role="img" aria-labelledby="title desc">
-  <title id="title">AzmBezierGate signal flow</title>
+  <title id="title">AZMbeziExp signal flow</title>
   <desc id="desc">Peak and RMS detection feed independent attack and release mixes. Their levels drive direction selection and curves. The selected target is smoothed and applied equally to both input channels.</desc>
   <defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="userSpaceOnUse"><path d="M0 0L8 4 0 8Z" fill="#5f6b8a"/></marker></defs>
   <rect width="1000" height="430" rx="16" fill="#f3f5f9"/>
