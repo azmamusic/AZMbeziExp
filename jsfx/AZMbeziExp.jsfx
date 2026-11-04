@@ -446,7 +446,7 @@ function ui_begin() (
   mg = 44 * S; // 全パーツ共通の左右余白（ヘッダー、グラフ、リダクションメーター、欄、RMS CONTROL、フッターの端をそろえる）
   ft_h = 22 * S; ft_y = ui_h - 18 * S - ft_h;
   rms_on = rms_open >= 0.5;
-  sec_h = (rms_on ? 98 : 22) * S;
+  sec_h = (rms_on ? 104 : 22) * S;
   kz_y = ft_y - 6 * S - sec_h; // RMS Control セクションの上端
   kg_y = kz_y + 20 * S; // グループ名の行
   gg = 16 * S;
@@ -960,9 +960,9 @@ function knob_slot(i sx sy sw sh) local(hot act ed ined n cx cy rad vy tw th) (
   hot || act ? ( setc(C_SLOT, 1); rrect(sx + 1 * S, sy, sw - 2 * S, sh - 4 * S, 8 * S); );
   font(7); setc(C_TEXT, 1);
   txt(pget(i, 7), sx, sy + 2 * S, sw, 12 * S, 1 | 4);
-  rad = 13 * S; cx = sx + sw * 0.5; cy = sy + 16 * S + rad;
+  rad = 13 * S; cx = sx + sw * 0.5; cy = sy + 19 * S + rad;
   knob_draw(cx, cy, rad, n, pget(i, 10), hot, act);
-  vy = sy + 16 * S + 2 * rad + 3 * S;
+  vy = sy + 19 * S + 2 * rad + 3 * S;
   ed ? edit_box(sx + 3 * S, vy, sw - 6 * S, 15 * S) : (
     strcpy(#kv, fmt(slider(i), pget(i, 5)));
     strcat(#kv, " ");
@@ -981,7 +981,7 @@ function knob_group(title col p0 p1 x) local(k p tw th) (
   k = 0;
   loop(2,
     p = k == 0 ? p0 : p1;
-    knob_slot(p, x + k * kw, kg_y + 14 * S, kw, 62 * S);
+    knob_slot(p, x + k * kw, kg_y + 16 * S, kw, 65 * S);
     k += 1;
   );
   x + 2 * kw + gg;
