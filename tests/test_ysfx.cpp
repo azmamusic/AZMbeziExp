@@ -416,9 +416,9 @@ static void test_detection_bars()
     };
     auto blue = [&](double x, double y) { return px(x, y, 0); };
     // The displayed level decays slightly between frames, so positions are read back after each frame.
-    auto frame = [&](double a, double up) {
+    auto frame = [&](double a, double up, double r = -120) {
         e.set_var("m_a", 0); e.set_var("m_r", 0);
-        e.set_var("ui_a", a); e.set_var("ui_r", -120);
+        e.set_var("ui_a", a); e.set_var("ui_r", r);
         e.set_var("m_up", up); e.set_var("ui_hl", up);
         e.mouse(0, 0, 0);
         return e.xpix(e.var("ui_a"));
@@ -446,12 +446,22 @@ static void test_detection_bars()
     check(near_edge < peak(x4, y), "bar fades out as it approaches the edge");
 
     // Glow around the bottom (Close) segment shared by both curves: amber for Attack, white for Release.
+    // It only shows while the detected level of that side is on screen.
     double gx = e.px("g_x0") + 20, gy = e.px("g_b") - 5;
     double far_y = gy - 30;
-    frame(e.var("v_lo") - 5, 1);
+    double lo = e.var("v_lo") - 5;
+    frame(-47, 1, -47);
     check(blue(gx, gy) < 95 && red(gx, gy) > red(gx, far_y) + 20, "attack curve glows while it decides the gain");
-    frame(e.var("v_lo") - 5, 0);
+    frame(-47, 0, -47);
     check(blue(gx, gy) > 105, "release curve glows while it decides the gain");
+    frame(lo, 1, -47);
+    check(std::abs(red(gx, gy) - red(gx, far_y)) < 5, "no glow while the attack level is off screen");
+    frame(-47, 0, lo);
+    check(std::abs(red(gx, gy) - red(gx, far_y)) < 5, "no glow while the release level is off screen");
+    frame(e.var("v_lo") + 1, 1, -47);
+    int dim = red(gx, gy);
+    frame(-47, 1, -47);
+    check(dim < red(gx, gy), "glow fades out as the level approaches the edge");
 }
 
 static void test_range_field()
