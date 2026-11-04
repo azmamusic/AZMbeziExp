@@ -28,7 +28,7 @@
       <text x="776" y="174">Target</text><text x="919" y="174">Gain</text>
     </g>
     <g font-size="12" fill="#5f6b8a">
-      <text x="75" y="174">max(|L|, |R|)</text><text x="229" y="111">Peak Sens</text><text x="229" y="237">Window / RMS Sens</text>
+      <text x="75" y="174">max(|L|, |R|)</text><text x="229" y="111">Peak (0 dB)</text><text x="229" y="237">Window / RMS Sens</text>
       <text x="409" y="111">Attack RMS Ratio</text><text x="409" y="237">Release RMS Ratio</text>
       <text x="605" y="70">A in dB</text><text x="605" y="192">2 ms slope detector</text><text x="605" y="209">Attack priority</text><text x="605" y="316">R in dB</text>
       <text x="776" y="195">select A or R</text><text x="919" y="194">Time smoothing</text>
