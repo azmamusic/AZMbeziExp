@@ -35,6 +35,8 @@ JSFX に対応したホストのエフェクト用フォルダに [`jsfx/AZMbezi
 | RELEASE | Time | ゲイン下降時の追随時間。0.1〜500 ms、既定 80 ms |
 | RELEASE | RMS Ratio | Release 用の混合比。0% は Peak、100% は RMS。既定 100% |
 
+カーブの既定値は、Attack が Close −70 dB／Open −60 dB、Release が Close −65 dB／Open −55 dB です。SYNC の既定は Off です。
+
 つまみやハンドルはドラッグ、ホイール、右クリックでの数値入力ができます。Shift は微調整、ダブルクリックまたは Ctrl+クリックは既定値へのリセットです。
 
 ### 表示範囲
