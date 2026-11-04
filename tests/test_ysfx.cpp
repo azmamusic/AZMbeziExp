@@ -297,7 +297,7 @@ static void test_defaults()
     Effect e;
     const double expected[][2] = {
         {1, 60}, {2, 10}, {3, -55}, {4, 60}, {6, -55}, {7, 15}, {8, -60},
-        {9, 6}, {10, 60}, {11, 10}, {12, 120}, {13, 30}, {14, 60}, {16, 1},
+        {9, 6}, {10, 60}, {11, 10}, {12, 120}, {13, 30}, {14, 60}, {16, 0},
     };
     for (const auto &entry : expected)
         near(e.get(int(entry[0])), entry[1], 1e-9, "default value");
@@ -401,45 +401,57 @@ static void test_axis_and_screenshot()
     }
 }
 
-// Detection bars: line only (no labels), a short afterimage trail, and fade-out near the graph edge.
+// Detection bars: lines in the curve colours with the same glow, constant and behind the curves (no
+// labels), fading out near the graph edge; the curve that decides the target gain glows as well.
 static void test_detection_bars()
 {
     Gui e;
     e.settle();
-    auto red = [&](double x, double y) { return int(e.pixels[(size_t(y) * 940 + size_t(x)) * 4 + 2]); };
+    auto px = [&](double x, double y, int ch) { return int(e.pixels[(size_t(y) * 940 + size_t(x)) * 4 + ch]); };
+    auto red = [&](double x, double y) { return px(x, y, 2); };
+    auto peak = [&](double x, double y) {
+        int m = 0;
+        for (int d = -2; d <= 2; ++d) m = std::max(m, red(x + d, y));
+        return m;
+    };
+    auto blue = [&](double x, double y) { return px(x, y, 0); };
     // The displayed level decays slightly between frames, so positions are read back after each frame.
-    auto frame = [&](double a) {
+    auto frame = [&](double a, double up) {
         e.set_var("m_a", 0); e.set_var("m_r", 0);
         e.set_var("ui_a", a); e.set_var("ui_r", -120);
-        e.set_var("m_up", 1); e.set_var("ui_hl", 1);
+        e.set_var("m_up", up); e.set_var("ui_hl", up);
         e.mouse(0, 0, 0);
         return e.xpix(e.var("ui_a"));
     };
     double y = e.px("pl_y") + 120;
 
-    double x1 = frame(-47);
-    int bar = red(x1, y);
-    check(bar > 150, "attack bar is drawn at the detected level");
+    double x1 = frame(-47, 1);
+    int bar = peak(x1, y);
+    check(bar > 200, "attack bar is crisp at the detected level");
+    check(red(x1 + 14, y) < 100 && red(x1 - 14, y) < 100, "no wide fill beside the bar");
     check(red(x1 + 15, e.px("pl_y") + 32 + 7) < 100, "no label chip next to the bar");
+    check(red(x1 + 6, y) > red(x1 + 14, y) + 10, "the bar has a glow around it");
+    double x1i = frame(-47, 0);
+    check(std::abs(peak(x1i, y) - bar) <= 10, "the bar looks the same whichever side decides the gain");
 
-    double x2 = frame(-37);
-    double ts[4];
-    ysfx_read_vmem(e.fx, uint32_t(e.var("TH")), ts, 4);
-    near(ts[0], e.var("ui_a"), 1e-9, "newest history entry is the current attack level");
-    near(ts[2], -47, 0.5, "previous attack level is kept for the trail");
-    int ghost = red(x1, y);
-    check(ghost > 50 && ghost < bar, "previous position remains as a faint afterimage");
-    check(red(x2, y) > ghost, "current bar is brighter than its afterimage");
+    // Curves are drawn over the bars: the Release curve's flat bottom hides the bar where they meet.
+    double x5 = frame(-60, 1);
+    check(blue(x5, e.px("g_b")) > 200 && blue(x5, y) < 120, "the bar is behind the curves");
 
-    for (int i = 0; i < 12; ++i) x2 = frame(-37);
-    check(red(x1, y) < 60, "afterimage disappears after a few frames");
-
-    frame(e.var("v_lo") - 5);
+    frame(e.var("v_lo") - 5, 1);
     check(red(e.px("g_x0"), y) < 100, "bar outside the graph is not drawn at the edge");
-    double x3 = frame(e.var("v_lo") + 2);
-    int near_edge = red(x3, y);
-    double x4 = frame(-47);
-    check(near_edge < red(x4, y), "bar fades out as it approaches the edge");
+    double x3 = frame(e.var("v_lo") + 1, 1);
+    int near_edge = peak(x3, y);
+    double x4 = frame(-47, 1);
+    check(near_edge < peak(x4, y), "bar fades out as it approaches the edge");
+
+    // Glow around the bottom (Close) segment shared by both curves: amber for Attack, white for Release.
+    double gx = e.px("g_x0") + 20, gy = e.px("g_b") - 5;
+    double far_y = gy - 30;
+    frame(e.var("v_lo") - 5, 1);
+    check(blue(gx, gy) < 95 && red(gx, gy) > red(gx, far_y) + 20, "attack curve glows while it decides the gain");
+    frame(e.var("v_lo") - 5, 0);
+    check(blue(gx, gy) > 105, "release curve glows while it decides the gain");
 }
 
 static void test_range_field()
@@ -460,7 +472,9 @@ static void test_range_field()
 static void test_collapse_and_knobs()
 {
     Gui e;
-    near(e.get(16), 1, 0, "RMS Control starts open");
+    near(e.get(16), 0, 0, "RMS Control starts closed");
+    e.set(16, 1);
+    e.mouse(0, 0, 0);
     e.set(11, 4);
     e.set(12, 20);
     double kw = e.px("kw"), mg = e.px("mg"), gg = e.px("gg");
