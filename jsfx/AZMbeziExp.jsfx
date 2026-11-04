@@ -31,7 +31,7 @@ slider23:a_p2y=50<0,100,0.1>-Attack Curve Point 2 Y (%)
 slider24:r_p1y=50<0,100,0.1>-Release Curve Point 1 Y (%)
 slider25:r_p2x=50<0,100,0.1>-Release Curve Point 2 X (%)
 slider26:r_p2y=83.3<0,100,0.1>-Release Curve Point 2 Y (%)
-slider27:bypass=0<0,1,1{Off,On}>Bypass
+slider27:bypass=0<0,1,1{Off,On}>-Bypass
 
 in_pin:Left
 in_pin:Right
@@ -40,6 +40,8 @@ out_pin:Right
 
 @init
 gfx_ext_retina = 1; // HiDPI では gfx_w/gfx_h が実ピクセルになる
+SS = 2; // 画面外バッファに SS 倍の解像度で描き、縮小して表示する（スーパーサンプリングによるアンチエイリアス）
+buf_w = buf_h = 0;
 
 function decay_of(ms) (
   exp(-1 / max(ms * 0.001 * srate, 1));
@@ -424,12 +426,12 @@ function fit_labels() local(i tw th wmax fs) (
 );
 
 function ui_begin() local(v pad) (
-  S = max(min(gfx_w / BW, gfx_h / BH), 0.25);
+  S = max(min(ui_w / BW, ui_h / BH), 0.25);
   now = time_precise();
   dt = clamp(now - t_prev, 0.001, 0.25);
   t_prev = now;
 
-  mx = mouse_x; my = mouse_y;
+  mx = mouse_x * SS; my = mouse_y * SS;
   lmb = mouse_cap & 1;
   rmb = mouse_cap & 2;
   ldown = lmb && !lmb_prev;
@@ -457,15 +459,15 @@ function ui_begin() local(v pad) (
   y_span = max(range_db, 1);
 
   mg = 14 * S;
-  ft_h = 22 * S; ft_y = gfx_h - 8 * S - ft_h;
+  ft_h = 22 * S; ft_y = ui_h - 8 * S - ft_h;
   kz_h = 92 * S; kz_y = ft_y - 6 * S - kz_h;
   gg = 16 * S;
-  kw = (gfx_w - 2 * mg - 3 * gg) / 8;
+  kw = (ui_w - 2 * mg - 3 * gg) / 8;
   fit_labels();
 
   pl_x = mg + 34 * S;
   pl_y = 46 * S;
-  pl_w = max(gfx_w - mg - 40 * S - pl_x, 60 * S);
+  pl_w = max(ui_w - mg - 40 * S - pl_x, 60 * S);
   pl_b = max(kz_y - 54 * S, pl_y + 60 * S);
   pl_h = pl_b - pl_y;
   pad = 12 * S;
@@ -1019,30 +1021,30 @@ function ui_header() local(x tw th w1 w2 hh lw) (
     leg_item(x + 14 * S, 16 * S, C_ATT, 1, #lg1, w1);
     leg_item(x + 14 * S + 15 * S + w1 + 16 * S, 16 * S, C_REL, 1, #lg2, w2);
   );
-  bypass_pill(gfx_w - mg - 104 * S, 11 * S, 104 * S, 26 * S);
-  sync_pill(gfx_w - mg - 104 * S - 8 * S - 92 * S, 11 * S, 92 * S, 26 * S);
+  bypass_pill(ui_w - mg - 104 * S, 11 * S, 104 * S, 26 * S);
+  sync_pill(ui_w - mg - 104 * S - 8 * S - 92 * S, 11 * S, 92 * S, 26 * S);
 );
 
 function ui_footer() local(p x w th tw) (
-  setc(C_PANEL, 1); rrect(mg, ft_y, gfx_w - 2 * mg, ft_h, 7 * S);
+  setc(C_PANEL, 1); rrect(mg, ft_y, ui_w - 2 * mg, ft_h, 7 * S);
   x = mg + 12 * S;
   font(2);
   edit_id ? (
     setc(C_TEXT, 1);
-    txt("Type a value.   Enter: apply     Esc: cancel     Click elsewhere: apply", x, ft_y, gfx_w, ft_h, 4);
+    txt("Type a value.   Enter: apply     Esc: cancel     Click elsewhere: apply", x, ft_y, ui_w, ft_h, 4);
   ) : (
     hint_id == 310 ? (
       setc(C_TEXT, 1); txt("Curve point", x, ft_y, 90 * S, ft_h, 4);
       setc(C_DIM, 1);
-      txt("Drag to bend the curve. It stays within Close/Open and 0 to -Range. Double-click: reset the curve", x + 80 * S, ft_y, gfx_w, ft_h, 4);
+      txt("Drag to bend the curve. It stays within Close/Open and 0 to -Range. Double-click: reset the curve", x + 80 * S, ft_y, ui_w, ft_h, 4);
     ) : hint_id == 301 ? (
       setc(C_TEXT, 1); txt("Bypass", x, ft_y, 60 * S, ft_h, 4);
       setc(C_DIM, 1);
-      txt("Pass the input through unprocessed. Detection keeps running.", x + 46 * S, ft_y, gfx_w, ft_h, 4);
+      txt("Pass the input through unprocessed. Detection keeps running.", x + 46 * S, ft_y, ui_w, ft_h, 4);
     ) : hint_id == 300 ? (
       setc(C_TEXT, 1); txt("Sync", x, ft_y, 60 * S, ft_h, 4);
       setc(C_DIM, 1);
-      txt("Release uses Attack's curve. Stored Release still clamps to graph bounds.", x + 38 * S, ft_y, gfx_w, ft_h, 4);
+      txt("Release uses Attack's curve. Stored Release still clamps to graph bounds.", x + 38 * S, ft_y, ui_w, ft_h, 4);
     ) : (
       hint_id ? (
         p = hint_id >= 100 ? hint_id - 100 : hint_id;
@@ -1053,10 +1055,10 @@ function ui_footer() local(p x w th tw) (
         strcat(#ft, pget(p, 6));
         gfx_measurestr(#ft, tw, th);
         setc(C_TEXT, 1); txt(#ft, x, ft_y, tw + 4 * S, ft_h, 4);
-        setc(C_DIM, 1); txt(pget(p, 9), x + tw + 18 * S, ft_y, gfx_w, ft_h, 4);
+        setc(C_DIM, 1); txt(pget(p, 9), x + tw + 18 * S, ft_y, ui_w, ft_h, 4);
       ) : (
         setc(C_DIM, 1);
-        txt("Drag the handles to shape the curves.   Right-click: type a value   Double-click: reset   Shift: fine", x, ft_y, gfx_w, ft_h, 4);
+        txt("Drag the handles to shape the curves.   Right-click: type a value   Double-click: reset   Shift: fine", x, ft_y, ui_w, ft_h, 4);
       );
     );
   );
@@ -1064,7 +1066,7 @@ function ui_footer() local(p x w th tw) (
 
 function ui_frame() (
   ui_begin();
-  setc(C_BG, 1); gfx_rect(0, 0, gfx_w, gfx_h);
+  setc(C_BG, 1); gfx_rect(0, 0, ui_w, ui_h);
   ui_header();
   ui_plot();
   ui_meters();
@@ -1121,4 +1123,10 @@ spl0 *= gain;
 spl1 *= gain;
 
 @gfx 800 520
+ui_w = gfx_w * SS; ui_h = gfx_h * SS;
+ui_w != buf_w || ui_h != buf_h ? ( gfx_setimgdim(0, ui_w, ui_h); buf_w = ui_w; buf_h = ui_h; );
+gfx_dest = 0;
 ui_frame();
+gfx_dest = -1;
+gfx_a = 1; gfx_mode = 0; gfx_x = gfx_y = 0;
+gfx_blit(0, 1 / SS, 0);
