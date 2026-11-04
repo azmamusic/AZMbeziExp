@@ -31,6 +31,7 @@ slider23:a_p2y=50<0,100,0.1>-Attack Curve Point 2 Y (%)
 slider24:r_p1y=50<0,100,0.1>-Release Curve Point 1 Y (%)
 slider25:r_p2x=50<0,100,0.1>-Release Curve Point 2 X (%)
 slider26:r_p2y=83.3<0,100,0.1>-Release Curve Point 2 Y (%)
+slider27:bypass=0<0,1,1{Off,On}>Bypass
 
 in_pin:Left
 in_pin:Right
@@ -121,6 +122,8 @@ eps_db = pow(10, -9);
 msq = 0;
 gain_init = 1;
 gdb = 0;
+byp_m = bypass >= 0.5;
+byp_k = 1 - exp(-1 / max(srate * 0.005, 1));
 
 // Direction uses a short slope detector so per-sample polarity flips do not
 // immediately switch curves.
@@ -132,7 +135,6 @@ prev_dir_a = prev_dir_r = 0;
 // ui_dirty は @gfx が立て、@block が下ろす。
 m_pk = 0;
 m_rms = 0;
-m_lin = 0;
 ui_dirty = 0;
 
 // @gfx は @sample と別スレッドで動く。@sample が使う変数名
@@ -141,7 +143,7 @@ ui_dirty = 0;
 // DSP と共有してよいのは slider 変数・m_*・ui_dirty と、GR 表示のために読むだけの gdb。
 // EEL2 の識別子は大文字小文字を区別しない（S と s は同じ）ので、S を使う関数に s という名前の引数は付けない。
 
-ui_pk = ui_rms = ui_lvl = -120;
+ui_pk = ui_rms = -120;
 t_prev = time_precise();
 
 BW = 800; BH = 520;
@@ -150,7 +152,7 @@ C_BG = 0xFFFFFF; C_PANEL = 0xF3F5F9; C_TRACK = 0xDFE4EE; C_SLOT = 0xEEF1F7; C_RU
 C_TEXT = 0x1F2E54; C_DIM = 0x5F6B8A; C_FAINT = 0x9AA4BC;
 C_PLOT = 0x1F2E54; C_GRID = 0x30426F; C_GRID2 = 0x4A5E94;
 C_YAM = 0xF0B13A; C_YAM2 = 0xF7C968; C_YAM3 = 0xDF9A22;
-C_ATT = 0xF0B13A; C_REL = 0xFFFFFF; C_SYNC = 0xF0B13A; C_LIVE = 0xFFFFFF; C_GR = 0x1F2E54;
+C_ATT = 0xF0B13A; C_REL = 0xFFFFFF; C_SYNC = 0xF0B13A; C_GR = 0x1F2E54;
 
 function clamp(x lim_lo lim_hi) ( x < lim_lo ? lim_lo : (x > lim_hi ? lim_hi : x) );
 function rnd(x) ( floor(x + 0.5) );
@@ -448,8 +450,6 @@ function ui_begin() local(v pad) (
   ui_pk = max(v > 0.000001 ? log(v) * 8.685889638065037 : -120, ui_pk - 45 * dt);
   v = m_rms; m_rms = 0;
   ui_rms = max(v > 0.000001 ? log(v) * 8.685889638065037 : -120, ui_rms - 45 * dt);
-  v = m_lin; m_lin = 0;
-  ui_lvl = max(v > 0.000001 ? log(v) * 8.685889638065037 : -120, ui_lvl - 45 * dt);
 
   v_lo = clamp(meter_lo, -90, -30);
   v_hi = max(clamp(meter_hi, -60, 0), v_lo + 10);
@@ -614,15 +614,6 @@ function draw_band() local(k n yt yb h asp rsp yn xa xr x1 x2 ax1 ay1 ax2 ay2 rx
     x2 - x1 >= 1 ? ( frect(x1, yt + k * h, x2 - x1, h); );
     k += 1;
   );
-);
-
-function draw_live() local(x y) (
-  x = xpix(clamp(ui_lvl, v_lo, v_hi));
-  y = ypix(clamp(gdb, -y_span, 0));
-  setc(C_LIVE, 0.2);
-  gfx_line(x, pl_y + 2 * S, x, pl_b - 2 * S, 0);
-  setc(C_PLOT, 1); gfx_circle(x, y, 7.4 * S, 1, 1);
-  setc(C_LIVE, 1); gfx_circle(x, y, 4.8 * S, 1, 1);
 );
 
 // ハンドル ID: 102/103, 106/107 = Close/Open（ID = 100 + スライダー番号）、
@@ -841,7 +832,6 @@ function ui_plot() local(inp) (
     draw_curve(6, C_REL, 5.5 * S);
     draw_curve(2, C_ATT, 5.5 * S);
   );
-  draw_live();
   draw_handles();
   (hov_h || (edit_id && (edit_id == 2 || edit_id == 3 || edit_id == 6 || edit_id == 7))) ? draw_tip();
   ui_bounds();
@@ -872,15 +862,16 @@ function ui_meters() local(y1 y2 h x) (
   txt(ui_rms > -100 ? fmt(ui_rms, 1) : "-inf", x, y2 - 2 * S, 40 * S, h + 4 * S, 4);
 );
 
-function ui_gr() local(bx barw yt yb y) (
+function ui_gr() local(bx barw yt yb y gr) (
   bx = pl_x + pl_w + 12 * S; barw = 10 * S;
   yt = ypix(0); yb = ypix(-y_span);
   setc(C_TRACK, 1); rrect(bx - 2 * S, yt - 2 * S, barw + 4 * S, yb - yt + 4 * S, 4.5 * S);
   setc(C_BG, 1); frect(bx, yt, barw, yb - yt);
-  y = ypix(clamp(gdb, -y_span, 0));
+  gr = bypass >= 0.5 ? 0 : gdb;
+  y = ypix(clamp(gr, -y_span, 0));
   setc(C_GR, 1); frect(bx, yt, barw, y - yt);
   font(4);
-  setc(C_GR, 1); txt(fmt(gdb, 1), bx - 14 * S, pl_b + 5 * S, barw + 28 * S, 13 * S, 1);
+  setc(C_GR, 1); txt(fmt(gr, 1), bx - 14 * S, pl_b + 5 * S, barw + 28 * S, 13 * S, 1);
 );
 
 KR = 900; // 各つまみの範囲（KR[i*4]..）
@@ -992,6 +983,23 @@ function sync_pill(x y w h) local(hot) (
   txt("SYNC", x + h, y, w - h - 8 * S, h, 1 | 4);
 );
 
+BY = 1010;
+function bypass_pill(x y w h) local(hot on) (
+  on = bypass >= 0.5;
+  hot = !drag_id && mx >= x && mx < x + w && my >= y && my < y + h;
+  hot ? ( hint_id = 301; );
+  ldown && hot ? ( slider(27) = on ? 0 : 1; notify(27); on = !on; );
+  on ? (
+    setc(hot ? C_YAM2 : C_YAM, 1); rrect(x, y, w, h, h * 0.5);
+  ) : (
+    setc(C_TEXT, 1); rrect(x, y, w, h, h * 0.5);
+    setc(hot ? C_SLOT : C_BG, 1); rrect(x + 2 * S, y + 2 * S, w - 4 * S, h - 4 * S, h * 0.5 - 2 * S);
+  );
+  setc(on ? C_TEXT : C_FAINT, 1); gfx_circle(x + h * 0.5 + 1 * S, y + h * 0.5, 3.8 * S, 1, 1);
+  font(6); setc(C_TEXT, 1);
+  txt("BYPASS", x + h, y, w - h - 8 * S, h, 1 | 4);
+);
+
 function ui_header() local(x tw th w1 w2 hh lw) (
   font(3); setc(C_TEXT, 1);
   gfx_measurestr("AZMbeziExp", tw, th);
@@ -1011,7 +1019,8 @@ function ui_header() local(x tw th w1 w2 hh lw) (
     leg_item(x + 14 * S, 16 * S, C_ATT, 1, #lg1, w1);
     leg_item(x + 14 * S + 15 * S + w1 + 16 * S, 16 * S, C_REL, 1, #lg2, w2);
   );
-  sync_pill(gfx_w - mg - 92 * S, 11 * S, 92 * S, 26 * S);
+  bypass_pill(gfx_w - mg - 104 * S, 11 * S, 104 * S, 26 * S);
+  sync_pill(gfx_w - mg - 104 * S - 8 * S - 92 * S, 11 * S, 92 * S, 26 * S);
 );
 
 function ui_footer() local(p x w th tw) (
@@ -1026,6 +1035,10 @@ function ui_footer() local(p x w th tw) (
       setc(C_TEXT, 1); txt("Curve point", x, ft_y, 90 * S, ft_h, 4);
       setc(C_DIM, 1);
       txt("Drag to bend the curve. It stays within Close/Open and 0 to -Range. Double-click: reset the curve", x + 80 * S, ft_y, gfx_w, ft_h, 4);
+    ) : hint_id == 301 ? (
+      setc(C_TEXT, 1); txt("Bypass", x, ft_y, 60 * S, ft_h, 4);
+      setc(C_DIM, 1);
+      txt("Pass the input through unprocessed. Detection keeps running.", x + 46 * S, ft_y, gfx_w, ft_h, 4);
     ) : hint_id == 300 ? (
       setc(C_TEXT, 1); txt("Sync", x, ft_y, 60 * S, ft_h, 4);
       setc(C_DIM, 1);
@@ -1092,7 +1105,6 @@ lin = dir_up ? a_lin : r_lin;
 lvl_db = log(lin) * 8.685889638065037;
 m_pk = max(m_pk, pk_lin);
 m_rms = max(m_rms, rms_lin);
-m_lin = max(m_lin, lin);
 
 tgt = dir_up ? curve_db(lvl_db, a_close, a_span, a_x1, a_y1, a_x2, a_y2, range_db)
              : curve_db(lvl_db, e_close, r_span, r_x1, r_y1, r_x2, r_y2, range_db);
@@ -1102,6 +1114,9 @@ gain_init ? ( gdb = tgt; gain_init = 0; ) : (
 );
 
 gain = exp(gdb * 0.11512925464970229);
+// Bypass crossfades over ~5 ms to avoid clicks; detection and gdb keep running.
+byp_m += ((bypass >= 0.5) - byp_m) * byp_k;
+gain += (1 - gain) * byp_m;
 spl0 *= gain;
 spl1 *= gain;
 
