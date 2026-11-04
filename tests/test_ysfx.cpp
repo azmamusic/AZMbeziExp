@@ -5,6 +5,8 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <chrono>
+#include <thread>
 #include <vector>
 
 static void check(bool ok, const char *message)
@@ -68,6 +70,16 @@ struct Effect {
 static const double kAttackCurve = 0.5;
 static const double kReleaseCurve = -0.5;
 
+// Fixed parameter set used by the DSP tests: Attack Open -55 / Range 10 (Close -65),
+// Release Close -55 / Range 15 (Open -40), Range 40 dB.
+static void set_reference_params(Effect &e)
+{
+    e.set(1, 40);
+    e.set(2, 10); e.set(3, -55); e.set(4, kAttackCurve * 100);
+    e.set(6, -55); e.set(7, 15); e.set(8, kReleaseCurve * 100);
+    e.set(9, 6); e.set(10, 40); e.set(11, 10); e.set(12, 120);
+}
+
 static double curve(double level, double close, double open, double c, double range = 40)
 {
     double t = (level - close) / (open - close);
@@ -87,8 +99,9 @@ static double curve(double level, double close, double open, double c, double ra
 static void compare_reference(double attack_mix, double release_mix, bool sync)
 {
     Effect e;
-    e.set(15, attack_mix * 100);
-    e.set(16, release_mix * 100);
+    set_reference_params(e);
+    e.set(13, attack_mix * 100);
+    e.set(14, release_mix * 100);
     e.set(5, sync ? 1 : 0);
     double msq = 0, gain = 0;
     double dir_a_f = 0, dir_r_f = 0, prev_dir_a = 0, prev_dir_r = 0;
@@ -133,7 +146,7 @@ static void compare_reference(double attack_mix, double release_mix, bool sync)
 static void test_direction_and_automation()
 {
     Effect e;
-    e.set(15, 0); e.set(16, 100);
+    e.set(13, 0); e.set(14, 100);
     e.run(0.001, 0.001);
     e.set_var("gain_init", 0);
     e.set_var("dir_a_f", 0.5);
@@ -154,7 +167,7 @@ static void test_direction_and_automation()
 static void test_detector_and_gain()
 {
     Effect e;
-    e.set(15, 0); e.set(16, 0);
+    e.set(13, 0); e.set(14, 0); e.set(10, 40);
     e.run(0.1, 0.1);
     double previous_msq = e.var("msq");
     e.run(0, 0);
@@ -207,139 +220,35 @@ static void test_bypass()
     double l = 0;
     for (int i = 0; i < 2000; ++i) l = e.run(0.001, 0.001);
     check(std::abs(l) < 0.001 * 0.5, "expander attenuates quiet input");
-    e.set(17, 1);
+    e.set(15, 1);
     for (int i = 0; i < 4800; ++i) l = e.run(0.001, 0.001);
     near(l, 0.001, 1e-9, "bypass passes input through");
-    e.set(17, 0);
+    e.set(15, 0);
     for (int i = 0; i < 4800; ++i) l = e.run(0.001, 0.001);
     check(std::abs(l) < 0.001 * 0.5, "bypass off restores processing");
 }
 
-static void test_clamping()
+static void test_relative_ranges()
 {
     Effect e;
+    e.set(3, -50); e.set(2, 12);
+    e.set(6, -40); e.set(7, 20);
+    e.run(0.001, 0.001);
+    near(e.var("a_close"), -62, 1e-9, "attack Close = Open - Range");
+    near(e.var("r_open"), -20, 1e-9, "release Open = Close + Range");
+    near(e.var("e_close"), -40, 1e-9, "release curve close");
+    near(e.var("e_open"), -20, 1e-9, "release curve open");
     e.set(5, 1);
-    e.set(13, -50);
     e.run(0.001, 0.001);
-    near(e.get(2), -50, 1e-7, "attack close clamped");
-    near(e.get(3), -49.9, 1e-7, "attack open separated");
-    near(e.get(6), -50, 1e-7, "synced release close clamped");
-    near(e.get(7), -40, 1e-7, "synced release open stays inside the viewport");
-    e.set(13, -90);
-    e.run(0.001, 0.001);
-    near(e.get(2), -50, 1e-7, "widening does not restore values");
-    e.set(2, -80);
-    e.set(3, -75);
-    e.run(0.001, 0.001);
-    near(e.get(2), -80, 1e-7, "automation remains within viewport");
-    e.set(14, -60);
-    e.set(13, -30);
-    e.run(0.001, 0.001);
-    check(e.get(14) - e.get(13) >= 10 - 1e-8, "automated bounds preserve 10 dB span");
+    near(e.var("e_close"), -62, 1e-9, "synced release uses the attack Close");
+    near(e.var("e_open"), -50, 1e-9, "synced release uses the attack Open");
+    near(e.get(6), -40, 1e-9, "sync keeps the stored release values");
+    near(e.get(7), 20, 1e-9, "sync keeps the stored release range");
 
-    Effect upper;
-    upper.set(14, 0);
-    upper.set(2, -30); upper.set(3, -20);
-    upper.set(6, -25); upper.set(7, -15);
-    upper.run(0.001, 0.001);
-    upper.set(14, -40);
-    upper.run(0.001, 0.001);
-    near(upper.get(2), -40.1, 1e-7, "attack close clamped at upper edge");
-    near(upper.get(3), -40, 1e-7, "attack open clamped at upper edge");
-    near(upper.get(6), -40.1, 1e-7, "release close clamped at upper edge");
-    near(upper.get(7), -40, 1e-7, "release open clamped at upper edge");
-}
-
-static void test_gui_bounds()
-{
-    Effect e;
-    near(e.get(11), 10, 1e-6, "attack time default");
-    near(e.get(12), 120, 1e-6, "release time default");
+    // Moving the base moves the whole curve; the Range stays.
+    e.set(3, -30);
     e.run(0.001, 0.001);
-    std::vector<uint8_t> pixels(800 * 520 * 4);
-    ysfx_gfx_config_t cfg{};
-    cfg.pixel_width = 800; cfg.pixel_height = 520;
-    cfg.pixels = pixels.data(); cfg.scale_factor = 1;
-    ysfx_gfx_setup(e.fx, &cfg);
-    ysfx_gfx_update_mouse(e.fx, 0, 0, 0, 0, 0, 0);
-    ysfx_gfx_run(e.fx);
-    e.set(11, 4);
-    e.set(12, 20);
-    // ATTACK / RELEASE の Time つまみ（RMS 2 つ、REDUCTION 1 つ、続いて各 2 つ）
-    double kw = e.px("kw"), mg = e.px("mg"), gg = e.px("gg");
-    for (int knob_x : {int(mg + 3 * kw + 2 * gg + kw / 2), int(mg + 5 * kw + 3 * gg + kw / 2)}) {
-        int knob_y = static_cast<int>(e.px("kz_y") + 49);
-        for (int click = 0; click < 2; ++click) {
-            ysfx_gfx_update_mouse(e.fx, 0, knob_x, knob_y, 1, 0, 0);
-            ysfx_gfx_run(e.fx);
-            ysfx_gfx_update_mouse(e.fx, 0, knob_x, knob_y, 0, 0, 0);
-            ysfx_gfx_run(e.fx);
-        }
-    }
-    near(e.get(11), 10, 1e-6, "attack time reset");
-    near(e.get(12), 120, 1e-6, "release time reset");
-    if (const char *path = std::getenv("AZM_TEST_SCREENSHOT")) {
-        ysfx_gfx_update_mouse(e.fx, 0, 0, 0, 0, 0, 0);
-        ysfx_gfx_run(e.fx);
-        FILE *file = std::fopen(path, "wb");
-        check(file != nullptr, "open screenshot");
-        std::fprintf(file, "P6\n800 520\n255\n");
-        for (size_t i = 0; i < pixels.size(); i += 4) {
-            std::fputc(pixels[i + 2], file);
-            std::fputc(pixels[i + 1], file);
-            std::fputc(pixels[i], file);
-        }
-        std::fclose(file);
-    }
-    int x = static_cast<int>(e.px("g_x0") + 30);
-    int y = static_cast<int>(e.px("pl_b") + 13);
-    ysfx_gfx_update_mouse(e.fx, 0, x, y, 1, 0, 0);
-    ysfx_gfx_run(e.fx);
-    ysfx_gfx_update_mouse(e.fx, 0, x + 40, y, 1, 0, 0);
-    ysfx_gfx_run(e.fx);
-    ysfx_gfx_update_mouse(e.fx, 0, x + 40, y, 0, 0, 0);
-    ysfx_gfx_run(e.fx);
-    near(e.get(13), -73, 1e-6, "drag meter minimum");
-    e.run(0.001, 0.001);
-
-    ysfx_gfx_update_mouse(e.fx, 0, x, y, 1, 0, 0);
-    ysfx_gfx_run(e.fx);
-    ysfx_gfx_update_mouse(e.fx, 0, x, y, 0, 0, 0);
-    ysfx_gfx_run(e.fx);
-    near(e.var("edit_id"), 13, 0, "click meter minimum opens editor");
-    for (char c : {'-', '5', '0', '\n'}) {
-        ysfx_gfx_add_key(e.fx, 0, c, true);
-        ysfx_gfx_run(e.fx);
-        ysfx_gfx_add_key(e.fx, 0, c, false);
-    }
-    near(e.get(13), -50, 1e-6, "type meter minimum");
-    near(e.get(2), -50, 1e-6, "GUI narrowing clamps attack");
-    near(e.get(6), -50, 1e-6, "GUI narrowing clamps release");
-    check((ysfx_fetch_slider_automations(e.fx) & (uint64_t(1) << 1)) != 0,
-          "GUI clamping notifies automation");
-    int right_x = static_cast<int>(e.px("g_x0") + e.px("g_w") - 30);
-    ysfx_gfx_update_mouse(e.fx, 0, right_x, y, 1, 0, 0);
-    ysfx_gfx_run(e.fx);
-    ysfx_gfx_update_mouse(e.fx, 0, right_x, y, 0, 0, 0);
-    ysfx_gfx_run(e.fx);
-    near(e.var("edit_id"), 14, 0, "click meter maximum opens editor");
-    for (char c : {'-', '4', '0', '\n'}) {
-        ysfx_gfx_add_key(e.fx, 0, c, true);
-        ysfx_gfx_run(e.fx);
-        ysfx_gfx_add_key(e.fx, 0, c, false);
-    }
-    near(e.get(14), -40, 1e-6, "type meter maximum");
-    int plot_x = static_cast<int>(e.px("pl_x") + e.px("pl_w") * 0.7);
-    int plot_y = static_cast<int>(e.px("pl_y") + e.px("pl_h") * 0.5);
-    for (int click = 0; click < 2; ++click) {
-        ysfx_gfx_update_mouse(e.fx, 0, plot_x, plot_y, 1, 0, 0);
-        ysfx_gfx_run(e.fx);
-        ysfx_gfx_update_mouse(e.fx, 0, plot_x, plot_y, 0, 0, 0);
-        ysfx_gfx_run(e.fx);
-    }
-    near(e.get(13), -75, 1e-6, "double-click resets minimum");
-    near(e.get(14), -35, 1e-6, "double-click resets maximum");
-    near(e.get(2), -50, 1e-6, "reset does not restore clamped curve");
+    near(e.var("a_close"), -42, 1e-9, "attack curve moves with Open");
 }
 
 // The first sample initialises the gain directly to the selected curve's target.
@@ -351,7 +260,8 @@ static void test_curve_shapes()
         for (double f : fractions) {
             for (int sync = 0; sync < 2; ++sync) {
                 Effect e;
-                e.set(16, 0);
+                set_reference_params(e);
+                e.set(14, 0);
                 e.set(5, sync);
                 e.set(sync ? 4 : 8, c * 100);
                 double close = sync ? -65 : -55, open = sync ? -55 : -40;
@@ -365,7 +275,8 @@ static void test_curve_shapes()
     double previous = -1e9;
     for (double level_db = -70; level_db <= -50; level_db += 0.25) {
         Effect e;
-        e.set(16, 0); e.set(5, 1);
+        set_reference_params(e);
+        e.set(14, 0); e.set(5, 1);
         e.set(4, 100);
         double amplitude = std::pow(10.0, level_db / 20);
         e.run(amplitude, amplitude);
@@ -374,7 +285,8 @@ static void test_curve_shapes()
         previous = e.var("gdb");
     }
     Effect straight;
-    straight.set(16, 0); straight.set(8, 0);
+    set_reference_params(straight);
+    straight.set(14, 0); straight.set(8, 0);
     double amplitude = std::pow(10.0, -47.5 / 20);
     straight.run(amplitude, amplitude);
     near(straight.var("gdb"), -20, 1e-9, "zero strength is a straight line");
@@ -384,113 +296,276 @@ static void test_defaults()
 {
     Effect e;
     const double expected[][2] = {
-        {1, 40}, {2, -65}, {3, -55}, {4, 50}, {6, -55}, {7, -40}, {8, -50},
-        {9, 6}, {10, 40}, {11, 10}, {12, 120}, {15, 30}, {16, 60},
+        {1, 60}, {2, 10}, {3, -55}, {4, 60}, {6, -55}, {7, 15}, {8, -60},
+        {9, 6}, {10, 60}, {11, 10}, {12, 120}, {13, 30}, {14, 60}, {16, 1},
     };
     for (const auto &entry : expected)
         near(e.get(int(entry[0])), entry[1], 1e-9, "default value");
 }
 
+// GUI harness: 940x520 pixel buffer and mouse/key helpers (coordinates are in mouse units).
+struct Gui : Effect {
+    std::vector<uint8_t> pixels = std::vector<uint8_t>(940 * 520 * 4);
+    Gui()
+    {
+        set(1, 40);
+        set(2, 10); set(3, -55); set(4, 50);
+        set(6, -55); set(7, 15); set(8, -50);
+        run(0.001, 0.001);
+        ysfx_gfx_config_t cfg{};
+        cfg.pixel_width = 940; cfg.pixel_height = 520;
+        cfg.pixels = pixels.data(); cfg.scale_factor = 1;
+        ysfx_gfx_setup(fx, &cfg);
+        mouse(0, 0, 0);
+    }
+    void mouse(int x, int y, int down)
+    {
+        ysfx_gfx_update_mouse(fx, 0, x, y, down, 0, 0);
+        ysfx_gfx_run(fx);
+    }
+    void click(int x, int y)
+    {
+        mouse(x, y, 1);
+        mouse(x, y, 0);
+    }
+    void drag(double x, double y, double dx, double dy)
+    {
+        set_var("lc_id", 0); // avoid treating back-to-back drags as a double-click
+        mouse(int(x), int(y), 1);
+        mouse(int(x + dx / 2), int(y + dy / 2), 1);
+        mouse(int(x + dx), int(y + dy), 1);
+        mouse(int(x + dx), int(y + dy), 0);
+        run(0.001, 0.001);
+    }
+    void type(const char *text)
+    {
+        for (const char *c = text; *c; ++c) {
+            ysfx_gfx_add_key(fx, 0, *c, true);
+            ysfx_gfx_run(fx);
+            ysfx_gfx_add_key(fx, 0, *c, false);
+        }
+    }
+    // Let the eased graph axis settle.
+    void settle(int frames = 60)
+    {
+        for (int i = 0; i < frames; ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(25));
+            mouse(0, 0, 0);
+        }
+    }
+    double xpix(double db) { return px("g_x0") + (db - var("v_lo")) * px("g_w") / var("v_span"); }
+    double ypix(double gain) { return px("g_y0") - gain * px("g_h") / var("y_span"); }
+};
+
+static void test_axis_and_screenshot()
+{
+    Gui e;
+    // Attack Close -65 .. Release Open -40, plus 10 dB on each side.
+    near(e.var("v_lo"), -75, 1e-9, "axis low = lowest Close - 10 dB");
+    near(e.var("v_hi"), -30, 1e-9, "axis high = highest Open + 10 dB");
+
+    e.set(3, -45);
+    e.settle();
+    near(e.var("v_lo"), -65, 0.02, "axis follows Close (attack -55, release -55)");
+    near(e.var("v_hi"), -30, 0.02, "axis follows Open (release -40)");
+    e.set(5, 1);
+    e.settle();
+    near(e.var("v_hi"), -35, 0.02, "synced axis ignores the stored release curve");
+
+    // Live detection: meters track the combined Peak/RMS levels of each side.
+    e.set(5, 0); e.set(13, 0); e.set(14, 0);
+    for (int i = 0; i < 200; ++i) e.run(0.001, 0.001);
+    e.mouse(0, 0, 0);
+    near(e.var("ui_a"), -60, 0.05, "attack meter shows the combined level");
+    near(e.var("ui_r"), -60, 0.05, "release meter shows the combined level");
+    near(e.var("m_a"), 0, 0, "GUI consumes the audio-thread maximum");
+    e.set_var("dir_up", 1); e.set_var("m_up", 1);
+    e.settle(30);
+    check(e.var("ui_hl") > 0.95, "attack side highlighted while the level rises");
+
+    if (const char *path = std::getenv("AZM_TEST_SCREENSHOT")) {
+        e.set(3, -55);
+        e.set(13, 30); e.set(14, 60);
+        e.settle();
+        for (int i = 0; i < 30; ++i) e.run(0.0012, 0.0012);
+        e.mouse(0, 0, 0);
+        FILE *file = std::fopen(path, "wb");
+        check(file != nullptr, "open screenshot");
+        std::fprintf(file, "P6\n940 520\n255\n");
+        for (size_t i = 0; i < e.pixels.size(); i += 4) {
+            std::fputc(e.pixels[i + 2], file);
+            std::fputc(e.pixels[i + 1], file);
+            std::fputc(e.pixels[i], file);
+        }
+        std::fclose(file);
+    }
+}
+
+static void test_range_field()
+{
+    Gui e;
+    double mg = e.px("mg"), cw = e.px("ui_w") - 2 * mg;
+    int fx = int(mg + cw - 56);
+    int fy = int(e.px("pl_b") + 12 + 10);
+    e.set(1, 60);
+    e.drag(fx, fy, 0, -40);
+    check(e.get(1) > 60, "dragging up increases the Reduction");
+    e.click(fx, fy);
+    near(e.var("edit_id"), 1, 0, "click the Reduction field opens the editor");
+    e.type("-45\n");
+    near(e.get(1), 45, 1e-9, "typed Reduction is the (negative) lower limit");
+}
+
+static void test_collapse_and_knobs()
+{
+    Gui e;
+    near(e.get(16), 1, 0, "RMS Control starts open");
+    e.set(11, 4);
+    e.set(12, 20);
+    double kw = e.px("kw"), mg = e.px("mg"), gg = e.px("gg");
+    // DETECTION (9, 10), ATTACK (13, 11), RELEASE (14, 12), two knobs each.
+    int ky = int(e.px("kg_y") + 14 + 35);
+    int attack_time_x = int(mg + 3 * kw + gg + kw / 2);
+    int release_time_x = int(mg + 5 * kw + 2 * gg + kw / 2);
+    for (int x : {attack_time_x, release_time_x}) {
+        e.click(x, ky);
+        e.click(x, ky);
+    }
+    near(e.get(11), 10, 1e-6, "attack smoothing time reset");
+    near(e.get(12), 120, 1e-6, "release smoothing time reset");
+
+    e.drag(int(mg + 2 * kw + gg + kw / 2), ky, 0, -30);
+    check(e.get(13) > 30, "dragging the Attack RMS Ratio knob up increases it");
+    e.drag(int(mg + kw / 2), ky, 0, 30);
+    check(e.get(9) < 6, "dragging the Sens knob down decreases it");
+
+    double full_h = e.px("pl_b");
+    e.click(int(mg + 10), int(e.px("kz_y") + 9));
+    near(e.get(16), 0, 0, "header click collapses RMS Control");
+    e.mouse(0, 0, 0);
+    check(e.px("pl_b") > full_h + 50, "graph grows when the section is collapsed");
+    e.click(attack_time_x, ky);
+    near(e.get(11), 10, 1e-6, "collapsed knobs are not interactive");
+    e.click(int(mg + 10), int(e.px("kz_y") + 9));
+    near(e.get(16), 1, 0, "header click expands RMS Control");
+    e.mouse(0, 0, 0);
+    near(e.px("pl_b"), full_h, 1e-6, "layout is restored");
+}
+
 static void test_handle_drag()
 {
-    Effect e;
-    e.run(0.001, 0.001);
-    std::vector<uint8_t> pixels(800 * 520 * 4);
-    ysfx_gfx_config_t cfg{};
-    cfg.pixel_width = 800; cfg.pixel_height = 520;
-    cfg.pixels = pixels.data(); cfg.scale_factor = 1;
-    ysfx_gfx_setup(e.fx, &cfg);
-    auto mouse = [&](int x, int y, int down) {
-        ysfx_gfx_update_mouse(e.fx, 0, x, y, down, 0, 0);
-        ysfx_gfx_run(e.fx);
-    };
-    mouse(0, 0, 0);
+    Gui e;
     // The handle sits at the curve midpoint (0.5 + c/4, 0.5 - c/4) of the Close/Open box.
-    auto handle_px = [&](double c, double &px, double &py) {
-        px = e.px("g_x0") + (-55 + (0.5 + c / 4) * 15 - e.var("v_lo")) * e.px("g_w") / e.var("v_span");
-        py = e.px("g_y0") + 40 * (0.5 + c / 4) * e.px("g_h") / e.var("y_span");
+    auto mid = [&](double c, double &x, double &y) {
+        x = e.xpix(-55 + (0.5 + c / 4) * 15);
+        y = e.ypix(-40 * (0.5 + c / 4));
     };
     auto current = [&]() { return e.get(8) / 100; };
-    auto drag = [&](double px, double py, double dx, double dy) {
-        e.set_var("lc_id", 0); // avoid treating back-to-back drags as a double-click
-        mouse(int(px), int(py), 1);
-        mouse(int(px + dx / 2), int(py + dy / 2), 1);
-        mouse(int(px + dx), int(py + dy), 1);
-        mouse(int(px + dx), int(py + dy), 0);
-        e.run(0.001, 0.001);
-    };
 
-    double px, py;
-    handle_px(current(), px, py);
-    drag(px, py, 20, 0);
+    double x, y;
+    mid(current(), x, y);
+    e.drag(x, y, 20, 0);
     double dfx = 20 * e.var("v_span") / (e.px("g_w") * 15);
     near(current(), -0.5 + 2 * dfx, 0.02, "dragging right opens the curve later");
-    handle_px(current(), px, py);
-    drag(px, py, 0, 20);
+    mid(current(), x, y);
+    e.drag(x, y, 0, 20);
     double dfy = -20 * e.var("y_span") / (40 * e.px("g_h"));
     near(current(), -0.5 + 2 * dfx - 2 * dfy, 0.02, "dragging down opens the curve later");
 
-    handle_px(current(), px, py);
-    drag(px, py, 600, 600);
+    mid(current(), x, y);
+    e.drag(x, y, 600, 600);
     near(current(), 1, 1e-9, "curve strength is capped at +100%");
-    handle_px(current(), px, py);
-    drag(px, py, -600, -600);
+    mid(current(), x, y);
+    e.drag(x, y, -600, -600);
     near(current(), -1, 1e-9, "curve strength is capped at -100%");
 
-    handle_px(current(), px, py);
-    for (int click = 0; click < 2; ++click) {
-        mouse(int(px), int(py), 1);
-        mouse(int(px), int(py), 0);
-    }
-    near(current(), kReleaseCurve, 1e-9, "double-click resets the curve");
+    mid(current(), x, y);
+    for (int click = 0; click < 2; ++click) e.click(int(x), int(y));
+    near(current(), -0.6, 1e-9, "double-click resets the curve");
+}
+
+static void test_base_and_range_handles()
+{
+    Gui e;
+    double span = e.var("v_span"), gw = e.px("g_w");
+    double db_per_px = span / gw;
+    double v_lo = e.var("v_lo"), v_hi = e.var("v_hi");
+
+    // Attack Open (103) moves the whole curve; Close follows at the same Range.
+    double hx = e.xpix(-55), hy = e.ypix(0);
+    e.set_var("lc_id", 0);
+    e.mouse(int(hx), int(hy), 1);
+    e.mouse(int(hx + 20), int(hy), 1);
+    near(e.get(3), -55 + 20 * db_per_px, 0.1, "attack Open handle moves the curve");
+    near(e.get(2), 10, 1e-9, "attack Range is unchanged");
+    near(e.var("v_lo"), v_lo, 1e-9, "axis does not move while a handle is dragged (low)");
+    near(e.var("v_hi"), v_hi, 1e-9, "axis does not move while a handle is dragged (high)");
+    e.mouse(int(hx + 20), int(hy), 0);
+    e.set(3, -55);
+
+    // Attack Close (102) edits Range: moving left widens it.
+    e.run(0.001, 0.001);
+    e.settle();
+    e.drag(e.xpix(-65), e.ypix(-40), -20, 0);
+    near(e.get(2), 10 + 20 * db_per_px, 0.15, "attack Close handle edits the Range");
+    near(e.get(3), -55, 1e-9, "attack Open stays");
+    e.set(2, 10);
+
+    // Release Close (106) moves the whole curve; Open (107) edits Range.
+    e.run(0.001, 0.001);
+    e.settle();
+    e.drag(e.xpix(-55), e.ypix(-40), 20, 0);
+    near(e.get(6), -55 + 20 * db_per_px, 0.15, "release Close handle moves the curve");
+    near(e.get(7), 15, 1e-9, "release Range is unchanged");
+    e.set(6, -55);
+    e.run(0.001, 0.001);
+    e.settle();
+    e.drag(e.xpix(-40), e.ypix(0), 20, 0);
+    near(e.get(7), 15 + 20 * db_per_px, 0.15, "release Open handle edits the Range");
+    // Release Open never goes above 0 dB.
+    e.settle();
+    e.drag(e.xpix(-55 + e.get(7)), e.ypix(0), 1500, 0);
+    near(e.get(7), 55, 1e-6, "release Open is limited to 0 dB");
 }
 
 static void test_fields()
 {
-    Effect e;
-    e.run(0.001, 0.001);
-    std::vector<uint8_t> pixels(800 * 520 * 4);
-    ysfx_gfx_config_t cfg{};
-    cfg.pixel_width = 800; cfg.pixel_height = 520;
-    cfg.pixels = pixels.data(); cfg.scale_factor = 1;
-    ysfx_gfx_setup(e.fx, &cfg);
-    auto mouse = [&](int x, int y, int down) {
-        ysfx_gfx_update_mouse(e.fx, 0, x, y, down, 0, 0);
-        ysfx_gfx_run(e.fx);
-    };
-    mouse(0, 0, 0);
-    double g_x0 = e.px("g_x0"), g_w = e.px("g_w");
-    double y = e.px("pl_b") + 27 + 8;
-    double grp = (g_w - 12) / 2, w = (grp - 50 - 12) / 3;
-    // Field centres: Curve, Close, Open of the left (Attack) and right (Release) groups.
+    Gui e;
+    double g_x0 = e.px("mg"), g_w = e.px("ui_w") - 2 * e.px("mg");
+    double y = e.px("pl_b") + 12 + 10;
+    double grp = (g_w - 104 - 60) / 2, w = (grp - 52 - 9) / 3;
+    // Field centres: Curve, Open|Close, Range of the left (Attack) and right (Release) groups.
     auto cx = [&](bool release, int k) {
-        return int((release ? g_x0 + g_w - grp : g_x0) + 54 + (w + 4) * k + w / 2);
+        const double width[] = {0.85 * w, w, 1.15 * w};
+        double x = (release ? g_x0 + grp + 30 : g_x0) + 55;
+        for (int i = 0; i < k; ++i) x += width[i] + 3;
+        return int(x + width[k] / 2);
     };
-    auto drag = [&](int x, int dx, int dy) {
-        mouse(x, int(y), 1);
-        mouse(x + dx, int(y) + dy, 1);
-        mouse(x + dx, int(y) + dy, 0);
-    };
-    drag(cx(false, 0), 20, 0);
+    e.drag(cx(false, 0), y, 20, 0);
     near(e.get(4), 60, 1e-9, "dragging the attack curve field");
-    drag(cx(false, 1), 0, -20);
-    near(e.get(2), -64, 1e-6, "dragging the attack close field");
-    drag(cx(true, 2), -20, 0);
-    near(e.get(7), -41, 1e-6, "dragging the release open field");
+    e.drag(cx(false, 1), y, 0, -20);
+    near(e.get(3), -54, 1e-6, "dragging the attack Open field");
+    near(e.get(2), 10, 1e-9, "Range is independent of the Open field");
+    e.drag(cx(false, 2), y, 0, -20);
+    near(e.get(2), 9, 1e-6, "dragging the attack Range field (shown as a negative value)");
+    e.drag(cx(true, 1), y, 20, 0);
+    near(e.get(6), -54, 1e-6, "dragging the release Close field");
+    e.drag(cx(true, 2), y, -20, 0);
+    near(e.get(7), 14, 1e-6, "dragging the release Range field");
 
-    mouse(cx(true, 0), int(y), 1);
-    mouse(cx(true, 0), int(y), 0);
+    e.click(cx(true, 0), int(y));
     near(e.var("edit_id"), 8, 0, "click release curve field opens editor");
-    for (char c : {'-', '8', '0', '\n'}) {
-        ysfx_gfx_add_key(e.fx, 0, c, true);
-        ysfx_gfx_run(e.fx);
-        ysfx_gfx_add_key(e.fx, 0, c, false);
-    }
+    e.type("-80\n");
     near(e.get(8), -80, 1e-9, "type release curve");
+
+    e.click(cx(false, 2), int(y));
+    near(e.var("edit_id"), 2, 0, "click attack Range field opens editor");
+    e.type("-20\n");
+    near(e.get(2), 20, 1e-9, "typed Range is a distance below Open");
 
     e.set(5, 1);
     e.run(0.001, 0.001);
-    drag(cx(true, 0), 20, 0);
+    e.drag(cx(true, 0), y, 20, 0);
     near(e.get(8), -80, 1e-9, "release fields are inactive while synced");
 }
 
@@ -503,13 +578,16 @@ int main()
     compare_reference(0.5, 0.75, true);
     test_direction_and_automation();
     test_detector_and_gain();
-    test_clamping();
+    test_relative_ranges();
     test_block_sizes();
     test_bypass();
-    test_gui_bounds();
     test_defaults();
     test_curve_shapes();
+    test_axis_and_screenshot();
+    test_range_field();
+    test_collapse_and_knobs();
     test_handle_drag();
+    test_base_and_range_handles();
     test_fields();
     std::puts("ysfx integration tests passed");
 }

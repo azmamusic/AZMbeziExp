@@ -7,23 +7,22 @@ tags:gate expander dynamics vocal
 
 options:no_meter
 
-slider1:range_db=60<0,96,0.1>-Range (dB)
-slider2:a_close=-65<-90,0,0.1>-Attack Curve Close (dB)
+slider1:range_db=60<0,96,0.1>-Reduction (dB)
+slider2:a_rng=10<0.1,60,0.1>-Attack Curve Range below Open (dB)
 slider3:a_open=-55<-90,0,0.1>-Attack Curve Open (dB)
 slider4:a_curve=60<-100,100,1>-Attack Curve (%)
 slider5:curve_sync=0<0,1,1{Off,On}>-Sync Attack/Release Curves
 slider6:r_close=-55<-90,0,0.1>-Release Curve Close (dB)
-slider7:r_open=-40<-90,0,0.1>-Release Curve Open (dB)
+slider7:r_rng=15<0.1,60,0.1>-Release Curve Range above Close (dB)
 slider8:r_curve=-60<-100,100,1>-Release Curve (%)
 slider9:rms_sens=6<-24,24,0.1>-RMS Sensitivity (dB)
 slider10:rms_time=60<1,200,1:log>-RMS Window (ms)
-slider11:g_open=10<0.1,100,0.1:log>-Attack Time (ms)
-slider12:g_close=120<0.1,500,0.1:log>-Release Time (ms)
-slider13:meter_lo=-75<-90,-30,0.1>-Meter Min (dB)
-slider14:meter_hi=-35<-60,0,0.1>-Meter Max (dB)
-slider15:attack_mix=30<0,100,1>-Attack RMS Ratio (%)
-slider16:release_mix=60<0,100,1>-Release RMS Ratio (%)
-slider17:bypass=0<0,1,1{Off,On}>-Bypass
+slider11:g_open=10<0.1,100,0.1:log>-Attack Smoothing Time (ms)
+slider12:g_close=120<0.1,500,0.1:log>-Release Smoothing Time (ms)
+slider13:attack_mix=30<0,100,1>-Attack RMS Ratio (%)
+slider14:release_mix=60<0,100,1>-Release RMS Ratio (%)
+slider15:bypass=0<0,1,1{Off,On}>-Bypass
+slider16:rms_open=1<0,1,1{Closed,Open}>-RMS Control Open
 
 in_pin:Left
 in_pin:Right
@@ -53,11 +52,14 @@ function curve_db(lvl, close, span, x1, y1, range)
   );
 );
 
+// カーブの位置は「基準 + 相対ゲイン」で持つ。Attack は Open の下へ a_rng、Release は Close の上へ r_rng。
 // Sync 中も Release のスライダー値を保持し、e_* に実際に使うカーブを設定する。
 function update_coefs() (
+  a_close = a_open - a_rng;
+  r_open = r_close + r_rng;
   e_close = sync_on ? a_close : r_close;
   e_open = sync_on ? a_open : r_open;
-  a_span = max(a_open - a_close, 0.01);
+  a_span = max(a_rng, 0.01);
   r_span = max(e_open - e_close, 0.01);
   // 曲線の強さ c (-1..1) は制御点を対角線に直交する線上で動かす。+ は後から開く（下に凸）、- は早く開く。
   a_c = min(max(a_curve * 0.01, -1), 1);
@@ -74,31 +76,10 @@ function update_coefs() (
   r_mix = min(max(release_mix * 0.01, 0), 1);
 );
 
-// Clamp both curves even when the bounds or curve parameters are automated.
-function enforce_curve_bounds() local(lo hi b cl op ncl nop) (
-  lo = min(max(meter_lo, -90), -30);
-  hi = max(min(max(meter_hi, -60), 0), lo + 10);
-  meter_lo != lo ? ( meter_lo = lo; sliderchange(slider13); );
-  meter_hi != hi ? ( meter_hi = hi; sliderchange(slider14); );
-  b = 2;
-  loop(2,
-    cl = slider(b); op = slider(b + 1);
-    ncl = min(max(cl, lo), hi - 0.1);
-    nop = min(max(op, lo + 0.1), hi);
-    nop < ncl + 0.1 - 0.000000001 ? (
-      ncl >= hi - 0.1 ? ( ncl = hi - 0.1; nop = hi; ) : ( nop = ncl + 0.1; );
-    );
-    ncl != cl ? ( slider(b) = ncl; sliderchange(slider(b)); );
-    nop != op ? ( slider(b + 1) = nop; sliderchange(slider(b + 1)); );
-    b = 6;
-  );
-);
-
 // スライダー変更時の処理。@slider のほか、GUI 操作後の @block からも呼ぶ。
 // GUI 側の sliderchange() で @slider が再実行されるかに依存しないよう、
 // オーディオスレッドだけが係数更新を行う（@gfx はこの関数を呼ばない）。
 function on_slider() (
-  enforce_curve_bounds();
   sync_on = curve_sync >= 0.5;
   update_coefs();
 );
@@ -120,22 +101,27 @@ dir_up = 0;
 dir_a_f = dir_r_f = 0;
 prev_dir_a = prev_dir_r = 0;
 
-// GUI との受け渡し用。m_* は @sample が前回描画以降の最大値を貯め、@gfx が読んで 0 に戻す。
+// GUI との受け渡し用。m_a / m_r は @sample が前回描画以降の最大値（Peak・RMS を各 RMS Ratio で混ぜた
+// 線形振幅）を貯め、@gfx が読んで 0 に戻す。m_up は直近の方向（1 = Attack 側のカーブが目標）。
 // ui_dirty は @gfx が立て、@block が下ろす。
-m_pk = 0;
-m_rms = 0;
+m_a = 0;
+m_r = 0;
+m_up = 0;
 ui_dirty = 0;
 
 // @gfx は @sample と別スレッドで動く。@sample が使う変数名
 // (a, msq, pk_lin, rms_lin, lin, lvl_db, la, lr, tgt, dir_up, gain, gdb など) を
 // 書き換えないこと。関数内の一時変数は必ず local() にする。
 // DSP と共有してよいのは slider 変数・m_*・ui_dirty と、GR 表示のために読むだけの gdb。
+// curve_db は @sample が使う関数なので @gfx からは呼ばない（GUI 側は下の gain_at で評価する）。
 // EEL2 の識別子は大文字小文字を区別しない（S と s は同じ）ので、S を使う関数に s という名前の引数は付けない。
 
-ui_pk = ui_rms = -120;
+ui_a = ui_r = -120; // 合成後の検知レベル（dB）。Attack 側・Release 側
+ui_hl = 0; // Attack 側がアクティブなら 1 に寄る（ハイライトのなめらかな切り替え用）
+ui_axis_init = 0;
 t_prev = time_precise();
 
-BW = 800; BH = 520;
+BW = 940; BH = 520;
 
 C_BG = 0xFFFFFF; C_PANEL = 0xF3F5F9; C_TRACK = 0xDFE4EE; C_SLOT = 0xEEF1F7; C_RULE = 0xD5DBE8;
 C_TEXT = 0x1F2E54; C_DIM = 0x5F6B8A; C_FAINT = 0x9AA4BC;
@@ -243,21 +229,32 @@ function pdef(i mn mx df st lg dc unit nm fnm hnt bip) local(b) (
 );
 function pget(i f) local(b) ( b = PT + i * 12; b[f]; );
 
-pdef(1, 0, 96, 40, 0.1, 0, 1, "dB", "Range", "Range", "Maximum attenuation when closed. Also sets the graph's gain axis", 0);
-pdef(2, -90, 0, -65, 0.1, 0, 1, "dB", "Close", "Attack Close", "Used while the level rises. Fully closed at or below this level", 0);
-pdef(3, -90, 0, -55, 0.1, 0, 1, "dB", "Open", "Attack Open", "Used while the level rises. Fully open (0 dB) at or above this level", 0);
-pdef(4, -100, 100, 50, 1, 0, 0, "%", "Curve", "Attack Curve", "Used while the level rises. + opens late, - opens early, 0 is straight", 1);
-pdef(6, -90, 0, -55, 0.1, 0, 1, "dB", "Close", "Release Close", "Used while the level falls. Fully closed at or below this level", 0);
-pdef(7, -90, 0, -40, 0.1, 0, 1, "dB", "Open", "Release Open", "Used while the level falls. Fully open (0 dB) at or above this level", 0);
-pdef(8, -100, 100, -50, 1, 0, 0, "%", "Curve", "Release Curve", "Used while the level falls. + opens late, - opens early, 0 is straight", 1);
+// 曲線 b=2 (Attack) / 6 (Release) の Close / Open の位置。Attack は Open が基準、Release は Close が基準。
+function cl_of(b) ( b == 2 ? slider(3) - slider(2) : slider(6); );
+function op_of(b) ( b == 2 ? slider(3) : slider(6) + slider(7); );
+
+// 値と単位の表示。Range は相対ゲインなので Attack は下向き（−）、Release は上向き（+）の符号を付ける。
+function pstr(i) (
+  strcpy(#pstr, i == 7 ? "+" : "");
+  strcat(#pstr, fmt(i == 2 || i == 1 ? -slider(i) : slider(i), i == 1 && abs(slider(1) - floor(slider(1) + 0.5)) < 0.05 ? 0 : pget(i, 5)));
+  strcat(#pstr, " ");
+  strcat(#pstr, pget(i, 6));
+  #pstr;
+);
+
+pdef(1, 0, 96, 60, 0.1, 0, 1, "dB", "Reduction", "Reduction", "Maximum attenuation when closed. Also sets the graph's gain axis", 0);
+pdef(2, 0.1, 60, 10, 0.1, 0, 1, "dB", "Range", "Attack Range", "Used while the level rises. Fully closed this many dB below Open", 0);
+pdef(3, -90, 0, -55, 0.1, 0, 1, "dB", "Open", "Attack Open", "Used while the level rises. Fully open (0 dB) at or above this level. Moves the whole curve", 0);
+pdef(4, -100, 100, 60, 1, 0, 0, "%", "Curve", "Attack Curve", "Used while the level rises. + opens late, - opens early, 0 is straight", 1);
+pdef(6, -90, 0, -55, 0.1, 0, 1, "dB", "Close", "Release Close", "Used while the level falls. Fully closed at or below this level. Moves the whole curve", 0);
+pdef(7, 0.1, 60, 15, 0.1, 0, 1, "dB", "Range", "Release Range", "Used while the level falls. Fully open this many dB above Close", 0);
+pdef(8, -100, 100, -60, 1, 0, 0, "%", "Curve", "Release Curve", "Used while the level falls. + opens late, - opens early, 0 is straight", 1);
 pdef(9, -24, 24, 6, 0.1, 0, 1, "dB", "Sens", "RMS Sensitivity", "Gain on the RMS detector. + opens on quieter sounds", 1);
-pdef(10, 1, 200, 40, 1, 1, 0, "ms", "Window", "RMS Window", "Averaging time of the RMS detector", 0);
-pdef(11, 0.1, 100, 10, 0.1, 1, 1, "ms", "Time", "Attack Time", "Gain smoothing time while opening", 0);
-pdef(12, 0.1, 500, 120, 0.1, 1, 1, "ms", "Time", "Release Time", "Gain smoothing time while closing", 0);
-pdef(13, -90, -30, -75, 0.1, 0, 1, "dB", "Meter Min", "Meter Min", "Drag or click to edit. Narrowing clamps both curves", 0);
-pdef(14, -60, 0, -35, 0.1, 0, 1, "dB", "Meter Max", "Meter Max", "Drag or click to edit. Narrowing clamps both curves", 0);
-pdef(15, 0, 100, 30, 1, 0, 0, "%", "RMS Ratio", "Attack RMS Ratio", "0% follows Peak; 100% follows RMS", 0);
-pdef(16, 0, 100, 60, 1, 0, 0, "%", "RMS Ratio", "Release RMS Ratio", "0% follows Peak; 100% follows RMS", 0);
+pdef(10, 1, 200, 60, 1, 1, 0, "ms", "Window", "RMS Window", "Averaging time of the RMS detector", 0);
+pdef(11, 0.1, 100, 10, 0.1, 1, 1, "ms", "Smoothing Time", "Attack Smoothing Time", "Gain smoothing time while the gain opens", 0);
+pdef(12, 0.1, 500, 120, 0.1, 1, 1, "ms", "Smoothing Time", "Release Smoothing Time", "Gain smoothing time while the gain closes", 0);
+pdef(13, 0, 100, 30, 1, 0, 0, "%", "RMS Ratio", "Attack RMS Ratio", "0% follows Peak; 100% follows RMS", 0);
+pdef(14, 0, 100, 60, 1, 0, 0, "%", "RMS Ratio", "Release RMS Ratio", "0% follows Peak; 100% follows RMS", 0);
 
 function pq(i v) local(pmn pmx pst) (
   pmn = pget(i, 0); pmx = pget(i, 1); pst = pget(i, 3);
@@ -280,31 +277,15 @@ function notify(i) (
   ui_dirty = 1;
 );
 
-// パラメーター変更の窓口。Close < Open、Meter Min < Meter Max（10 dB 以上）を保つ。
-function set_param(i v) local(old b cl op ncl nop lo hi) (
-  (i == 2 || i == 6) ? ( v = min(v, slider(i + 1) - 0.1); );
-  (i == 3 || i == 7) ? ( v = max(v, slider(i - 1) + 0.1); );
-  (i == 2 || i == 3 || i == 6 || i == 7) ? ( v = clamp(v, meter_lo, meter_hi); );
-  i == 13 ? ( v = min(v, slider(14) - 10); );
-  i == 14 ? ( v = max(v, slider(13) + 10); );
+// パラメーター変更の窓口。Range（2, 7）は大きさだけを持つので符号は無視する。
+// Release の Open（= Close + Range）は 0 dB を超えないようにする。
+function set_param(i v) local(old) (
+  (i == 1 || i == 2 || i == 7) ? ( v = abs(v); );
+  i == 6 ? ( v = min(v, -slider(7)); );
+  i == 7 ? ( v = min(v, -slider(6)); );
   v = pq(i, v);
   old = slider(i);
-  v != old ? (
-    slider(i) = v; notify(i);
-    (i == 13 || i == 14) ? (
-      lo = meter_lo; hi = meter_hi; b = 2;
-      loop(2,
-        cl = slider(b); op = slider(b + 1);
-        ncl = clamp(cl, lo, hi - 0.1); nop = clamp(op, lo + 0.1, hi);
-        nop < ncl + 0.1 - 0.000000001 ? (
-          ncl >= hi - 0.1 ? ( ncl = hi - 0.1; nop = hi; ) : ( nop = ncl + 0.1; );
-        );
-        ncl != cl ? ( slider(b) = ncl; notify(b); );
-        nop != op ? ( slider(b + 1) = nop; notify(b + 1); );
-        b = 6;
-      );
-    );
-  );
+  v != old ? ( slider(i) = v; notify(i); );
 );
 function reset_param(i) ( set_param(i, pget(i, 2)); );
 
@@ -395,18 +376,39 @@ function edit_box(x y w h) local(str tw th tx) (
 function fit_labels() local(i tw th wmax fs) (
   font(5);
   wmax = 1;
-  i = 1;
-  loop(16,
-    i == 1 || i == 9 || i == 10 || i == 11 || i == 12 || i == 15 || i == 16 ? (
-      gfx_measurestr(pget(i, 7), tw, th); wmax = max(wmax, tw);
-    );
+  i = 9;
+  loop(6,
+    gfx_measurestr(pget(i, 7), tw, th); wmax = max(wmax, tw);
     i += 1;
   );
   fs = max(rnd(11 * S), 6);
   lbl_fs = clamp(floor(fs * (kw - 4 * S) / wmax), 6, fs);
 );
 
-function ui_begin() local(v pad) (
+// 検知レベルの dB 表示値。速い立ち上がり・遅い減衰（45 dB/秒）で見せる。
+function det_db(v prev) ( max(v > 0.000001 ? log(v) * 8.685889638065037 : -120, prev - 45 * dt); );
+
+// グラフの横軸は、使っている曲線の Close / Open の外側 10 dB まで。ドラッグ中は動かさず、離したらなめらかに追従する。
+function update_axis() local(c1 c2 o1 o2 t_lo t_hi k) (
+  c1 = cl_of(2); o1 = op_of(2);
+  c2 = ui_sync ? c1 : cl_of(6);
+  o2 = ui_sync ? o1 : op_of(6);
+  t_lo = min(c1, c2) - 10;
+  t_hi = max(o1, o2) + 10;
+  !ui_axis_init ? (
+    v_lo = t_lo; v_hi = t_hi; ui_axis_init = 1;
+  ) : (
+    !((drag_id >= 100 && drag_id < 200) || (drag_id >= 400 && drag_id < 500)) ? (
+      k = 1 - exp(-dt * 14);
+      v_lo += (t_lo - v_lo) * k;
+      v_hi += (t_hi - v_hi) * k;
+      abs(t_lo - v_lo) < 0.01 ? v_lo = t_lo;
+      abs(t_hi - v_hi) < 0.01 ? v_hi = t_hi;
+    );
+  );
+);
+
+function ui_begin() (
   S = max(min(ui_w / BW, ui_h / BH), 0.25);
   now = time_precise();
   dt = clamp(now - t_prev, 0.001, 0.25);
@@ -428,33 +430,36 @@ function ui_begin() local(v pad) (
   (ldown || rdown) && edit_id && !(mx >= edit_rx && mx < edit_rx + edit_rw && my >= edit_ry && my < edit_ry + edit_rh) ? edit_commit();
   ui_keys();
 
-  // メーター: audio スレッドが貯めた最大値を取り込み、速い立ち上がり・遅い減衰で見せる
-  v = m_pk; m_pk = 0;
-  ui_pk = max(v > 0.000001 ? log(v) * 8.685889638065037 : -120, ui_pk - 45 * dt);
-  v = m_rms; m_rms = 0;
-  ui_rms = max(v > 0.000001 ? log(v) * 8.685889638065037 : -120, ui_rms - 45 * dt);
+  // audio スレッドが貯めた最大値を取り込む。ui_hl は Attack 側がアクティブなときに 1 へ寄る。
+  ui_a = det_db(m_a, ui_a); m_a = 0;
+  ui_r = det_db(m_r, ui_r); m_r = 0;
+  ui_hl += (m_up - ui_hl) * (1 - exp(-dt * 20));
 
-  v_lo = clamp(meter_lo, -90, -30);
-  v_hi = max(clamp(meter_hi, -60, 0), v_lo + 10);
+  update_axis();
   v_span = v_hi - v_lo;
   y_span = max(range_db, 1);
 
-  mg = 14 * S;
-  ft_h = 22 * S; ft_y = ui_h - 8 * S - ft_h;
-  kz_h = 92 * S; kz_y = ft_y - 6 * S - kz_h;
+  mg = 44 * S; // 全パーツ共通の左右余白（ヘッダー、グラフ、リダクションメーター、欄、RMS CONTROL、フッターの端をそろえる）
+  ft_h = 22 * S; ft_y = ui_h - 18 * S - ft_h;
+  rms_on = rms_open >= 0.5;
+  sec_h = (rms_on ? 98 : 22) * S;
+  kz_y = ft_y - 6 * S - sec_h; // RMS Control セクションの上端
+  kg_y = kz_y + 20 * S; // グループ名の行
   gg = 16 * S;
-  kw = (ui_w - 2 * mg - 3 * gg) / 7;
+  kw = (ui_w - 2 * mg - 2 * gg) / 6;
   fit_labels();
 
-  pl_x = mg + 34 * S;
-  pl_y = 46 * S;
-  pl_w = max(ui_w - mg - 40 * S - pl_x, 60 * S);
-  pl_b = max(kz_y - 76 * S, pl_y + 60 * S);
+  pl_x = mg;
+  pl_y = 53 * S;
+  mt_w = 30 * S; mt_gap = 8 * S; // 右端のリダクションメーター
+  pl_w = max(ui_w - 2 * mg - mt_w - mt_gap, 60 * S);
+  pl_b = max(kz_y - 46 * S, pl_y + 80 * S);
   pl_h = pl_b - pl_y;
-  pad = 12 * S;
-  g_x0 = pl_x + pad; g_w = pl_w - 2 * pad;
-  g_y0 = pl_y + pad; g_h = pl_h - 2 * pad;
-  clip_l = pl_x + S; clip_r = pl_x + pl_w - S;
+  // 軸の数字はグラフの内側（左端と下端）に置く。曲線を描く領域はその内側。
+  g_x0 = pl_x + 30 * S; g_w = pl_w - 30 * S - 14 * S;
+  g_y0 = pl_y + 12 * S; g_h = pl_h - 12 * S - 22 * S;
+  g_b = g_y0 + g_h;
+  clip_l = g_x0 - 4 * S; clip_r = pl_x + pl_w - S;
   hit_r2 = (16 * S) * (16 * S);
 );
 
@@ -523,10 +528,10 @@ function draw_grid() local(k x y raw step g dec every db first n) (
     db <= v_hi + 0.001 ? (
       x = rnd(xpix(db));
       setc(abs(db) % 10 == 0 ? C_GRID2 : C_GRID, 1);
-      gfx_line(x, pl_y + 2 * S, x, pl_b - 2 * S, 0);
-      (first + k) % every == 0 && x > g_x0 + 96 * S && x < g_x0 + g_w - 96 * S ? (
+      gfx_line(x, pl_y + 4 * S, x, g_b + 4 * S, 0);
+      (first + k) % every == 0 && x > g_x0 - 4 * S && x < g_x0 + g_w + 4 * S ? (
         setc(C_DIM, 1);
-        txt(fmt(db, 0), x - 20 * S, pl_b + 5 * S, 40 * S, 13 * S, 1);
+        txt(fmt(db, 0), x - 20 * S, g_b + 8 * S, 40 * S, 13 * S, 1);
       );
     );
     k += 1;
@@ -542,16 +547,16 @@ function draw_grid() local(k x y raw step g dec every db first n) (
   while (g <= y_span + 0.0001) (
     y = rnd(ypix(-g));
     setc(g == 0 ? C_GRID2 : C_GRID, 1);
-    gfx_line(pl_x + 2 * S, y, pl_x + pl_w - 2 * S, y, 0);
+    gfx_line(clip_l, y, pl_x + pl_w - 2 * S, y, 0);
     setc(C_DIM, 1);
-    txt(fmt(-g, dec), pl_x - 44 * S, y - 7 * S, 36 * S, 14 * S, 2 | 4);
+    txt(fmt(-g, dec), pl_x + 4 * S, y - 7 * S, g_x0 - pl_x - 12 * S, 14 * S, 2 | 4);
     g += step;
   );
 );
 
 // 曲線 b=2 (Attack) / 6 (Release) の折れ線。両端の水平部を含め、グラフの外には出さない。
 function curve_path(b th) local(cl op span u k x0 y0 x1 y1 yb yt) (
-  cl = slider(b); op = slider(b + 1);
+  cl = cl_of(b); op = op_of(b);
   span = max(op - cl, 0.01);
   cp_load(b);
   yb = ypix(-range_db); yt = ypix(0);
@@ -574,19 +579,20 @@ function draw_curve(b col th) (
   setc(col, 1); curve_path(b, th);
 );
 
-function draw_band() local(k n yt yb h asp rsp yn xa xr x1 x2 ax ay rx ry) (
+function draw_band() local(k n yt yb h acl rcl asp rsp yn xa xr x1 x2 ax ay rx ry) (
   yt = ypix(0); yb = ypix(-range_db);
   n = max(floor((yb - yt) / (2 * S)), 1);
   h = (yb - yt) / n;
   cp_load(2); ax = cp_x; ay = cp_y;
   cp_load(6); rx = cp_x; ry = cp_y;
-  asp = max(a_open - a_close, 0.01); rsp = max(r_open - r_close, 0.01);
+  acl = cl_of(2); rcl = cl_of(6);
+  asp = max(op_of(2) - acl, 0.01); rsp = max(op_of(6) - rcl, 0.01);
   setc(0xFFFFFF, 0.1);
   k = 0;
   loop(n,
     yn = 1 - (k + 0.5) / n;
-    xa = xpix(a_close + qx(qu(yn, ay), ax) * asp);
-    xr = xpix(r_close + qx(qu(yn, ry), rx) * rsp);
+    xa = xpix(acl + qx(qu(yn, ay), ax) * asp);
+    xr = xpix(rcl + qx(qu(yn, ry), rx) * rsp);
     x1 = max(min(xa, xr), clip_l); x2 = min(max(xa, xr), clip_r);
     x2 - x1 >= 1 ? ( frect(x1, yt + k * h, x2 - x1, h); );
     k += 1;
@@ -600,7 +606,7 @@ function hid(i) ( i == 0 ? 102 : i == 1 ? 103 : i == 2 ? 152 : i == 3 ? 106 : i 
 function id_curve(id) ( id % 10 < 5 ? 2 : 6; );
 function hpos(id) local(b cl op span) (
   b = id_curve(id);
-  cl = slider(b); op = slider(b + 1);
+  cl = cl_of(b); op = op_of(b);
   span = max(op - cl, 0.01);
   id < 150 ? (
     id == 100 + b ? ( h_x = xpix(cl); h_y = ypix(-range_db); ) : ( h_x = xpix(op); h_y = ypix(0); );
@@ -637,10 +643,11 @@ function drag_handle() local(b kk span dfx dfy) (
   kk = shift ? 0.1 : 1;
   shift != drag_sh ? ( drag_sh = shift; drag_anchor(); ); // Shift の切替時は基準を取り直して値が飛ばないようにする
   drag_id < 150 ? (
-    set_param(drag_id - 100, drag_v0 + kk * (mx - drag_mx0) * v_span / g_w);
+    // Attack の Close は Open からの距離 (Range) を、Open 側のハンドルは基準位置を動かす。Range は Close を右へ動かすと縮む。
+    set_param(drag_id - 100, drag_v0 + (drag_id == 102 ? -1 : 1) * kk * (mx - drag_mx0) * v_span / g_w);
   ) : (
     b = id_curve(drag_id);
-    span = max(slider(b + 1) - slider(b), 0.01);
+    span = max(op_of(b) - cl_of(b), 0.01);
     dfx = (mx - drag_mx0) * v_span / (g_w * span);
     dfy = range_db < 0.1 ? 0 : -(my - drag_my0) * y_span / (range_db * g_h);
     set_param(cidx(b), drag_v0 + kk * 200 * (dfx - dfy));
@@ -691,9 +698,7 @@ function draw_tip() local(p w h x y tw th ed bw nmw vw b id) (
   ) : (
     p = id - 100;
     strcpy(#tipn, ui_sync ? pget(p, 7) : pget(p, 8));
-    strcpy(#tip, fmt(slider(p), pget(p, 5)));
-    strcat(#tip, " ");
-    strcat(#tip, pget(p, 6));
+    strcpy(#tip, pstr(p));
   );
   font(2);
   gfx_measurestr(#tipn, nmw, th);
@@ -713,8 +718,9 @@ function draw_tip() local(p w h x y tw th ed bw nmw vw b id) (
 );
 
 // Click a field to type; dragging changes it at 0.05 units per pixel (the curve % at 0.5 per pixel).
-// tag: 0 = Meter Min/Max, 1 = Attack, 2 = Release。tag 2 は Sync 中は使われないので薄く表示して操作を受けない。
-function ui_field(i x y w h tag) local(hot id dx dy dis fg bg bd v lw vw th ed) (
+// tag: 1 = Attack, 2 = Release, 3 = 中立色の欄（Reduction）。tag 2 は Sync 中は使われないので薄く表示して操作を受けない。
+// Range（i = 2, 7）は基準（Open / Close）からの相対ゲインなので、基準の欄と見分けがつく配色と矢印で描く。
+function ui_field(i x y w h tag) local(hot id dx dy dis fg bg bd v lw vw nw th ed rng cy) (
   id = 400 + i;
   dis = tag == 2 && ui_sync;
   hot = !dis && mx >= x && mx < x + w && my >= y && my < y + h && (!drag_id || drag_id == id);
@@ -730,7 +736,8 @@ function ui_field(i x y w h tag) local(hot id dx dy dis fg bg bd v lw vw th ed) 
       drag_sh = shift; drag_mx0 = mx; drag_my0 = my; drag_v0 = slider(i);
       dx = dy = 0;
     );
-    bound_moved ? set_param(i, drag_v0 + (dx + dy) * (shift ? 0.1 : 1) * (pget(i, 3) >= 1 ? 0.5 : 0.05) / S);
+    // Attack の Range は「−x dB」と表示するので、右へドラッグすると表示値が増える（x が減る）向きにする
+    bound_moved ? set_param(i, drag_v0 + (i == 2 ? -1 : 1) * (dx + dy) * (shift ? 0.1 : 1) * (i == 1 ? 0.25 : (pget(i, 3) >= 1 ? 0.5 : 0.05)) / S);
   );
   drag_id == id && !lmb && lmb_prev ? (
     !bound_moved ? ( edit_begin(i); edit_fld = 1; );
@@ -743,49 +750,117 @@ function ui_field(i x y w h tag) local(hot id dx dy dis fg bg bd v lw vw th ed) 
     tag == 1 ? ( bd = C_YAM3; bg = hot || drag_id == id ? C_YAM2 : C_YAM; fg = C_TEXT; ) : (
     tag == 2 ? ( bd = C_PLOT; bg = C_PLOT; fg = C_BG; ) : (
       bd = C_TRACK; bg = hot || drag_id == id ? C_SLOT : C_BG; fg = C_TEXT; ));
-    dis ? ( bd = C_TRACK; bg = C_PANEL; fg = C_FAINT; );
+    rng = i == 2 || i == 7;
     tag == 2 && hot ? ( bd = C_GRID2; bg = C_GRID; );
+    rng ? (
+      hot || drag_id == id ? (
+        tag == 1 ? ( bd = C_YAM3; bg = 0xFFEBB5; ) : ( bd = C_GRID2; bg = 0xDDE3F0; );
+      ) : (
+        tag == 1 ? ( bd = C_YAM3; bg = 0xFFF4D8; ) : ( bd = C_FAINT; bg = 0xEEF1F7; );
+      );
+      fg = C_TEXT;
+    );
+    dis ? ( bd = C_TRACK; bg = C_PANEL; fg = C_FAINT; );
     setc(bd, 1); rrect(x, y, w, h, 4 * S);
     setc(bg, 1); rrect(x + S, y + S, w - 2 * S, h - 2 * S, 3 * S);
-    strcpy(#bound, fmt(slider(i), pget(i, 5))); strcat(#bound, " "); strcat(#bound, pget(i, 6));
+    strcpy(#bound, pstr(i));
     font(2); setc(fg, 1);
-    tag ? (
-      // 名前を左、値を右に置く
-      gfx_measurestr(#bound, vw, th);
-      txt(#bound, x, y, w - 7 * S, h, 2 | 4);
-      font(4); setc(fg, dis ? 1 : 0.7);
-      txt(pget(i, 7), x + 7 * S, y, w - vw - 14 * S, h, 4);
-    ) : (
-      txt(#bound, x, y, w, h, 1 | 4);
+    // 名前を左、値を右に置く
+    gfx_measurestr(#bound, vw, th);
+    txt(#bound, x, y, w - 5 * S, h, 2 | 4);
+    font(4); setc(fg, dis ? 1 : 0.7);
+    txt(pget(i, 7), x + 5 * S, y, w - vw - 10 * S, h, 4);
+    rng ? (
+      gfx_measurestr(pget(i, 7), nw, th);
+      cy = y + h * 0.5;
+      lw = x + 5 * S + nw + 6 * S;
+      setc(fg, dis ? 1 : 0.9);
+      i == 2 ? (
+        gfx_triangle(lw - 3 * S, cy - 1.8 * S, lw + 3 * S, cy - 1.8 * S, lw, cy + 2.4 * S);
+      ) : (
+        gfx_triangle(lw - 3 * S, cy + 1.8 * S, lw + 3 * S, cy + 1.8 * S, lw, cy - 2.4 * S);
+      );
     );
   );
 );
 
-function ui_bounds() local(w h y) (
-  w = 76 * S; h = 16 * S; y = pl_b + 5 * S;
-  ui_field(13, g_x0, y, w, h, 0);
-  ui_field(14, g_x0 + g_w - w, y, w, h, 0);
-);
-
-// グラフ下 2 段目: 左に Attack、右に Release の Curve / Close / Open。
-function ui_curve_fields() local(y w h gap tw x0 grp k cx i tag nm) (
-  h = 16 * S; y = pl_b + 27 * S; gap = 4 * S;
-  tw = 50 * S;
-  grp = (g_w - 12 * S) * 0.5;
+// グラフ下 1 段: 左に Attack、その右に Release、右端（メーターの下）に Reduction（リダクション下限）。
+// Attack / Release は Curve / 基準（Attack は Open、Release は Close） / Range の順。
+function ui_curve_fields() local(y w h gap tw x0 cw grp cx tag nm rf gp) (
+  h = 20 * S; y = pl_b + 12 * S; gap = 10 * S;
+  tw = 48 * S; rf = 104 * S; gp = 30 * S;
+  cw = ui_w - 2 * mg;
+  grp = (cw - rf - 2 * gp) * 0.5;
   w = (grp - tw - 3 * gap) / 3;
   tag = 1;
   loop(2,
-    x0 = tag == 1 ? g_x0 : g_x0 + g_w - grp;
+    x0 = tag == 1 ? mg : mg + grp + gp;
     nm = tag == 1 ? "ATTACK" : "RELEASE";
     font(4); setc(tag == 1 ? C_YAM3 : (ui_sync ? C_FAINT : C_PLOT), 1);
     txt(nm, x0, y, tw, h, 4);
-    i = tag == 1 ? 4 : 8;
     cx = x0 + tw + gap;
-    ui_field(i, cx, y, w, h, tag);
-    ui_field(i - 2, cx + w + gap, y, w, h, tag);
-    ui_field(i - 1, cx + 2 * (w + gap), y, w, h, tag);
+    ui_field(tag == 1 ? 4 : 8, cx, y, w * 0.85, h, tag);
+    cx += w * 0.85 + gap;
+    ui_field(tag == 1 ? 3 : 6, cx, y, w * 1.0, h, tag);
+    cx += w * 1.0 + gap;
+    ui_field(tag == 1 ? 2 : 7, cx, y, w * 1.15, h, tag);
+    setc(C_RULE, 1);
+    cx = floor(x0 + grp + gp * 0.5) + 0.5; gfx_line(cx, y + 1 * S, cx, y + h - 1 * S, 0);
     tag += 1;
   );
+  ui_field(1, mg + cw - rf, y, rf, h, 3);
+);
+
+// 検知レベルでの目標ゲイン（dB）。@sample の curve_db と同じ式を GUI 側で評価する。
+function gain_at(b lvl) local(cl sp t u) (
+  cl = cl_of(b); sp = max(op_of(b) - cl, 0.01);
+  t = (lvl - cl) / sp;
+  t <= 0 ? ( -range_db ) : (
+    t >= 1 ? ( 0 ) : (
+      cp_load(b);
+      u = qu(t, cp_x);
+      -range_db * (1 - qx(u, cp_y));
+    );
+  );
+);
+
+// col を C_PLOT 側へ a の割合で混ぜた不透明色にする（半透明にすると重ね描きで濃くなる図形用）。
+function setmix(col a) local(r g b) (
+  r = (((col >> 16) & 255) * a + ((C_PLOT >> 16) & 255) * (1 - a)) / 255;
+  g = (((col >> 8) & 255) * a + ((C_PLOT >> 8) & 255) * (1 - a)) / 255;
+  b = ((col & 255) * a + (C_PLOT & 255) * (1 - a)) / 255;
+  gfx_set(r, g, b, 1);
+);
+
+// 検知レベルの縦棒。hl（0..1）が高いほど、いま目標ゲインを決めている側として強調する。
+// 棒がカーブと交わる点が、その側の目標ゲイン。
+function draw_marker(col raw b hl name chip_y) local(lvl x yg r a w h cx tw th) (
+  lvl = clamp(raw, v_lo, v_hi);
+  x = xpix(lvl);
+  a = 0.4 + 0.6 * hl;
+  setc(col, 0.14 * hl); frect(x - 5 * S, pl_y + 4 * S, 10 * S, g_b - pl_y);
+  setc(col, a); frect(x - (0.7 + 0.8 * hl) * S, pl_y + 4 * S, (1.4 + 1.6 * hl) * S, g_b - pl_y);
+  yg = ypix(clamp(gain_at(b, lvl), -y_span, 0));
+  r = (3.5 + 3.5 * hl) * S;
+  hl > 0.05 ? ( setc(col, 0.25 * hl); gfx_circle(x, yg, r + 5 * S, 1, 1); );
+  setc(C_PLOT, 1); gfx_circle(x, yg, r + 2 * S, 1, 1);
+  setmix(col, a); gfx_circle(x, yg, r, 1, 1);
+
+  strcpy(#chip, name);
+  strcat(#chip, " ");
+  strcat(#chip, raw > -100 ? fmt(raw, 1) : "-inf");
+  font(4);
+  gfx_measurestr(#chip, tw, th);
+  w = tw + 14 * S; h = 15 * S;
+  cx = clamp(x - w * 0.5, g_x0, g_x0 + g_w - w);
+  setmix(col, 0.3 + 0.7 * hl); rrect(cx, chip_y, w, h, h * 0.5);
+  hl > 0.5 ? setc(C_TEXT, 1) : setc(C_FAINT, 1);
+  txt(#chip, cx, chip_y, w, h, 1 | 4);
+);
+
+function draw_markers() (
+  draw_marker(C_ATT, ui_a, 2, ui_hl, "ATTACK", pl_y + 32 * S);
+  draw_marker(C_REL, ui_r, ui_sync ? 2 : 6, 1 - ui_hl, "RELEASE", pl_y + 50 * S);
 );
 
 function ui_plot() local(inp) (
@@ -802,9 +877,6 @@ function ui_plot() local(inp) (
   rdown && hov_h && hov_h < 150 && edit_id != hov_h - 100 ? edit_begin(hov_h - 100);
   drag_id >= 100 && drag_id < 200 && lmb ? drag_handle();
   hov_h && hov_h < 150 && !lmb && wh != 0 ? ( wheel_param(hov_h - 100, wh); wh = 0; );
-  ldown && inp && !hov_h && !drag_id && !edit_id && is_dbl(500) ? (
-    set_param(14, pget(14, 2)); set_param(13, pget(13, 2));
-  );
 
   draw_grid();
   ui_sync ? (
@@ -815,47 +887,25 @@ function ui_plot() local(inp) (
     draw_curve(6, C_REL, 5.5 * S);
     draw_curve(2, C_ATT, 5.5 * S);
   );
+  draw_markers();
   draw_handles();
   (hov_h || tip_edit()) ? draw_tip();
-  ui_bounds();
   ui_curve_fields();
 );
 
-function meter_bar(y h lvl col) local(xl) (
-  xl = rnd(xpix(clamp(lvl, v_lo, v_hi)));
-  xl > g_x0 ? ( setc(col, 1); frect(g_x0, y, xl - g_x0, h); );
-);
-
-function ui_meters() local(y1 y2 h x) (
-  h = 7 * S;
-  y1 = pl_b + 49 * S; y2 = pl_b + 61 * S;
-  setc(C_TRACK, 1);
-  rrect(g_x0 - 2 * S, y1 - 2 * S, g_w + 4 * S, h + 4 * S, 3.5 * S);
-  rrect(g_x0 - 2 * S, y2 - 2 * S, g_w + 4 * S, h + 4 * S, 3.5 * S);
-  setc(C_BG, 1);
-  frect(g_x0, y1, g_w, h);
-  frect(g_x0, y2, g_w, h);
-  meter_bar(y1, h, ui_pk, C_TEXT);
-  meter_bar(y2, h, ui_rms, C_YAM);
-  font(4); setc(C_DIM, 1);
-  txt("PEAK", pl_x - 40 * S, y1 - 2 * S, 36 * S, h + 4 * S, 2 | 4);
-  txt("RMS", pl_x - 40 * S, y2 - 2 * S, 36 * S, h + 4 * S, 2 | 4);
-  x = pl_x + pl_w + 6 * S;
-  font(2); setc(C_TEXT, 1);
-  txt(ui_pk > -100 ? fmt(ui_pk, 1) : "-inf", x, y1 - 2 * S, 40 * S, h + 4 * S, 4);
-  txt(ui_rms > -100 ? fmt(ui_rms, 1) : "-inf", x, y2 - 2 * S, 40 * S, h + 4 * S, 4);
-);
-
-function ui_gr() local(bx barw yt yb y gr) (
-  bx = pl_x + pl_w + 12 * S; barw = 10 * S;
-  yt = ypix(0); yb = ypix(-y_span);
-  setc(C_TRACK, 1); rrect(bx - 2 * S, yt - 2 * S, barw + 4 * S, yb - yt + 4 * S, 4.5 * S);
-  setc(C_BG, 1); frect(bx, yt, barw, yb - yt);
+// 右端のリダクションメーター。グラフと同じ形で、縦軸（ゲイン）もグラフと同じ位置に合わせる。
+function ui_gr() local(x gr y y0 h) (
+  x = pl_x + pl_w + mt_gap;
+  setc(C_PLOT, 1); rrect(x, pl_y, mt_w, pl_h, 12 * S);
   gr = bypass >= 0.5 ? 0 : gdb;
+  y0 = ypix(0);
   y = ypix(clamp(gr, -y_span, 0));
-  setc(C_GR, 1); frect(bx, yt, barw, y - yt);
-  font(4);
-  setc(C_GR, 1); txt(fmt(gr, 1), bx - 14 * S, pl_b + 5 * S, barw + 28 * S, 13 * S, 1);
+  h = y - y0;
+  setc(C_GRID2, 1); gfx_line(x + 4 * S, y0, x + mt_w - 4 * S, y0, 0);
+  h >= 1 ? (
+    setc(0xFFFFFF, 1);
+    rrect(x + 6 * S, y0, mt_w - 12 * S, h, min(5 * S, h * 0.5));
+  );
 );
 
 KR = 900; // 各つまみの範囲（KR[i*4]..）
@@ -867,7 +917,7 @@ function arc_cap(cx cy rm ang w) (
 // 角度 ±135° に値を割り当てた円形つまみ。bip なら 0 の位置(真上)から値まで弧を引く。
 function knob_draw(cx cy rad n bip hot act) local(ang rin rm w a0 a1) (
   ang = (n - 0.5) * 4.71238898038469;
-  w = 4.8 * S;
+  w = 4 * S;
   rin = rad - w;
   rm = rad - w * 0.5;
   setc(C_TRACK, 1);
@@ -882,7 +932,7 @@ function knob_draw(cx cy rad n bip hot act) local(ang rin rm w a0 a1) (
   arc_cap(cx, cy, rm, a1, w);
   setc(C_TEXT, 1); gfx_circle(cx, cy, rin - 2.4 * S, 1, 1);
   setc(C_BG, 1);
-  sline(cx + sin(ang) * 2 * S, cy - cos(ang) * 2 * S, cx + sin(ang) * (rin - 6.4 * S), cy - cos(ang) * (rin - 6.4 * S), 2.6 * S);
+  sline(cx + sin(ang) * 2 * S, cy - cos(ang) * 2 * S, cx + sin(ang) * (rin - 5 * S), cy - cos(ang) * (rin - 5 * S), 2.4 * S);
 );
 
 function knob_slot(i sx sy sw sh) local(hot act ed ined n cx cy rad vy tw th) (
@@ -909,39 +959,61 @@ function knob_slot(i sx sy sw sh) local(hot act ed ined n cx cy rad vy tw th) (
   hot || act ? ( setc(C_SLOT, 1); rrect(sx + 1 * S, sy, sw - 2 * S, sh - 4 * S, 8 * S); );
   font(7); setc(C_TEXT, 1);
   txt(pget(i, 7), sx, sy + 2 * S, sw, 12 * S, 1 | 4);
-  rad = 17 * S; cx = sx + sw * 0.5; cy = sy + 18 * S + rad;
+  rad = 13 * S; cx = sx + sw * 0.5; cy = sy + 16 * S + rad;
   knob_draw(cx, cy, rad, n, pget(i, 10), hot, act);
-  vy = sy + 18 * S + 2 * rad + 5 * S;
-  ed ? edit_box(sx + 3 * S, vy, sw - 6 * S, 17 * S) : (
+  vy = sy + 16 * S + 2 * rad + 3 * S;
+  ed ? edit_box(sx + 3 * S, vy, sw - 6 * S, 15 * S) : (
     strcpy(#kv, fmt(slider(i), pget(i, 5)));
     strcat(#kv, " ");
     strcat(#kv, pget(i, 6));
     font(1); setc(act || hot ? C_TEXT : C_DIM, 1);
-    txt(#kv, sx, vy, sw, 17 * S, 1 | 4);
+    txt(#kv, sx, vy, sw, 15 * S, 1 | 4);
   );
 );
 
-function knob_group(title n p0 p1 p2 x) local(k p tw th) (
-  font(4); setc(C_DIM, 1);
+function knob_group(title col p0 p1 x) local(k p tw th) (
+  font(4); setc(col, 1);
   gfx_measurestr(title, tw, th);
-  txt(title, x + 2 * S, kz_y, tw + 8 * S, 12 * S, 4);
+  txt(title, x + 2 * S, kg_y, tw + 8 * S, 12 * S, 4);
   setc(C_RULE, 1);
-  gfx_line(x + tw + 12 * S, kz_y + 6 * S, x + n * kw - 2 * S, kz_y + 6 * S, 0);
+  gfx_line(x + tw + 12 * S, kg_y + 6 * S, x + 2 * kw - 2 * S, kg_y + 6 * S, 0);
   k = 0;
-  loop(n,
-    p = k == 0 ? p0 : (k == 1 ? p1 : p2);
-    knob_slot(p, x + k * kw, kz_y + 14 * S, kw, kz_h - 14 * S);
+  loop(2,
+    p = k == 0 ? p0 : p1;
+    knob_slot(p, x + k * kw, kg_y + 14 * S, kw, 62 * S);
     k += 1;
   );
-  x + n * kw + gg;
+  x + 2 * kw + gg;
+);
+
+// RMS Control の見出し。クリックで開閉する（開閉状態は rms_open に保存される）。
+function ui_rms_head() local(hot tw th cx cy) (
+  font(6);
+  gfx_measurestr("RMS CONTROL", tw, th);
+  hot = !drag_id && mx >= mg && mx < mg + tw + 34 * S && my >= kz_y && my < kz_y + 18 * S;
+  hot ? ( hint_id = 305; );
+  ldown && hot ? ( slider(16) = rms_on ? 0 : 1; notify(16); rms_on = !rms_on; );
+  cx = mg + 9 * S; cy = kz_y + 9 * S;
+  setc(hot ? C_TEXT : C_DIM, 1);
+  rms_on ? (
+    gfx_triangle(cx - 4.5 * S, cy - 2.5 * S, cx + 4.5 * S, cy - 2.5 * S, cx, cy + 3.5 * S);
+  ) : (
+    gfx_triangle(cx - 2.5 * S, cy - 4.5 * S, cx - 2.5 * S, cy + 4.5 * S, cx + 3.5 * S, cy);
+  );
+  setc(C_TEXT, 1);
+  txt("RMS CONTROL", mg + 22 * S, kz_y, tw + 8 * S, 18 * S, 4);
+  setc(C_RULE, 1);
+  gfx_line(mg + 30 * S + tw, kz_y + 9 * S, ui_w - mg, kz_y + 9 * S, 0);
 );
 
 function ui_knobs() local(x) (
-  x = mg;
-  x = knob_group("RMS", 2, 9, 10, 0, x);
-  x = knob_group("REDUCTION", 1, 1, 0, 0, x);
-  x = knob_group("ATTACK", 2, 11, 15, 0, x);
-  x = knob_group("RELEASE", 2, 12, 16, 0, x);
+  ui_rms_head();
+  rms_on ? (
+    x = mg;
+    x = knob_group("DETECTION", C_DIM, 9, 10, x);
+    x = knob_group("ATTACK", C_YAM3, 13, 11, x);
+    x = knob_group("RELEASE", C_TEXT, 14, 12, x);
+  );
 );
 
 function leg_item(x y col al label w) (
@@ -972,7 +1044,7 @@ function bypass_pill(x y w h) local(hot on) (
   on = bypass >= 0.5;
   hot = !drag_id && mx >= x && mx < x + w && my >= y && my < y + h;
   hot ? ( hint_id = 301; );
-  ldown && hot ? ( slider(17) = on ? 0 : 1; notify(17); on = !on; );
+  ldown && hot ? ( slider(15) = on ? 0 : 1; notify(15); on = !on; );
   on ? (
     setc(hot ? C_YAM2 : C_YAM, 1); rrect(x, y, w, h, h * 0.5);
   ) : (
@@ -987,7 +1059,7 @@ function bypass_pill(x y w h) local(hot on) (
 function ui_header() local(x tw th w1 w2 hh lw) (
   font(3); setc(C_TEXT, 1);
   gfx_measurestr("AZMbeziExp", tw, th);
-  txt("AZMbeziExp", mg + 2 * S, 8 * S, tw + 4 * S, 28 * S, 4);
+  txt("AZMbeziExp", mg, 15 * S, tw + 4 * S, 28 * S, 4);
   strcpy(#lg1, ui_sync ? "Attack = Release" : "Attack");
   strcpy(#lg2, ui_sync ? "Release (kept)" : "Release");
   font(5);
@@ -995,16 +1067,16 @@ function ui_header() local(x tw th w1 w2 hh lw) (
   gfx_measurestr(#lg2, w2, hh);
   x = mg + tw + 30 * S;
   lw = 14 * S + 15 * S + w1 + 16 * S + 15 * S + w2 + 14 * S;
-  setc(C_PLOT, 1); rrect(x, 11 * S, lw, 26 * S, 13 * S);
+  setc(C_PLOT, 1); rrect(x, 18 * S, lw, 26 * S, 13 * S);
   ui_sync ? (
-    leg_item(x + 14 * S, 16 * S, C_SYNC, 1, #lg1, w1);
-    leg_item(x + 14 * S + 15 * S + w1 + 16 * S, 16 * S, C_REL, 0.45, #lg2, w2);
+    leg_item(x + 14 * S, 23 * S, C_SYNC, 1, #lg1, w1);
+    leg_item(x + 14 * S + 15 * S + w1 + 16 * S, 23 * S, C_REL, 0.45, #lg2, w2);
   ) : (
-    leg_item(x + 14 * S, 16 * S, C_ATT, 1, #lg1, w1);
-    leg_item(x + 14 * S + 15 * S + w1 + 16 * S, 16 * S, C_REL, 1, #lg2, w2);
+    leg_item(x + 14 * S, 23 * S, C_ATT, 1, #lg1, w1);
+    leg_item(x + 14 * S + 15 * S + w1 + 16 * S, 23 * S, C_REL, 1, #lg2, w2);
   );
-  bypass_pill(ui_w - mg - 104 * S, 11 * S, 104 * S, 26 * S);
-  sync_pill(ui_w - mg - 104 * S - 8 * S - 92 * S, 11 * S, 92 * S, 26 * S);
+  bypass_pill(ui_w - mg - 104 * S, 18 * S, 104 * S, 26 * S);
+  sync_pill(ui_w - mg - 104 * S - 8 * S - 92 * S, 18 * S, 92 * S, 26 * S);
 );
 
 function ui_footer() local(p x w th tw) (
@@ -1026,15 +1098,17 @@ function ui_footer() local(p x w th tw) (
     ) : hint_id == 300 ? (
       setc(C_TEXT, 1); txt("Sync", x, ft_y, 60 * S, ft_h, 4);
       setc(C_DIM, 1);
-      txt("Release uses Attack's curve. Stored Release still clamps to graph bounds.", x + 38 * S, ft_y, ui_w, ft_h, 4);
+      txt("Release uses Attack's curve. The stored Release settings are kept.", x + 38 * S, ft_y, ui_w, ft_h, 4);
+    ) : hint_id == 305 ? (
+      setc(C_TEXT, 1); txt("RMS Control", x, ft_y, 90 * S, ft_h, 4);
+      setc(C_DIM, 1);
+      txt("Click to show or hide detection, RMS ratio and smoothing time.", x + 76 * S, ft_y, ui_w, ft_h, 4);
     ) : (
       hint_id ? (
         p = hint_id >= 100 ? hint_id - 100 : hint_id;
         strcpy(#ft, pget(p, 8));
         strcat(#ft, "  ");
-        strcat(#ft, fmt(slider(p), pget(p, 5)));
-        strcat(#ft, " ");
-        strcat(#ft, pget(p, 6));
+        strcat(#ft, pstr(p));
         gfx_measurestr(#ft, tw, th);
         setc(C_TEXT, 1); txt(#ft, x, ft_y, tw + 4 * S, ft_h, 4);
         setc(C_DIM, 1); txt(pget(p, 9), x + tw + 18 * S, ft_y, ui_w, ft_h, 4);
@@ -1051,7 +1125,6 @@ function ui_frame() (
   setc(C_BG, 1); gfx_rect(0, 0, ui_w, ui_h);
   ui_header();
   ui_plot();
-  ui_meters();
   ui_gr();
   ui_knobs();
   ui_footer();
@@ -1087,8 +1160,9 @@ prev_dir_a = dir_a_f;
 prev_dir_r = dir_r_f;
 lin = dir_up ? a_lin : r_lin;
 lvl_db = log(lin) * 8.685889638065037;
-m_pk = max(m_pk, pk_lin);
-m_rms = max(m_rms, rms_lin);
+m_a = max(m_a, a_lin);
+m_r = max(m_r, r_lin);
+m_up = dir_up;
 
 tgt = dir_up ? curve_db(lvl_db, a_close, a_span, a_x1, a_y1, range_db)
              : curve_db(lvl_db, e_close, r_span, r_x1, r_y1, range_db);
@@ -1104,7 +1178,7 @@ gain += (1 - gain) * byp_m;
 spl0 *= gain;
 spl1 *= gain;
 
-@gfx 800 520
+@gfx 940 520
 ui_w = gfx_w * SS; ui_h = gfx_h * SS;
 ui_w != buf_w || ui_h != buf_h ? ( gfx_setimgdim(0, ui_w, ui_h); buf_w = ui_w; buf_h = ui_h; );
 gfx_dest = 0;
