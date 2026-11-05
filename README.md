@@ -21,6 +21,8 @@
 
 JSFX に対応したホストのエフェクト用フォルダに [`jsfx/AZMbeziExp.jsfx`](jsfx/AZMbeziExp.jsfx) をコピーしてください。フォルダの場所や追加方法は使用するホストの案内を参照してください。
 
+VST として使用する場合は [ysfx](https://www.realinks.net/links/ysfx/) を使用してください。
+
 ## 使い方
 
 1. 歌声を再生し、グラフ上の縦棒（検知レベル）を見ながら Attack の Open と Range、Release の Close と Range を調整します。
