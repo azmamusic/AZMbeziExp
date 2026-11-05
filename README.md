@@ -19,8 +19,7 @@
 
 ## 導入
 
-JSFX に対応したホストのエフェクト用フォルダに [`jsfx/AZMbeziExp.jsfx`](jsfx/AZMbeziExp.jsfx) をコピーしてください。
-フォルダの場所や追加方法は使用するホストの案内を参照してください。
+JSFX に対応したホストのエフェクト用フォルダに [`jsfx/AZMbeziExp.jsfx`](jsfx/AZMbeziExp.jsfx) をコピーしてください。フォルダの場所や追加方法は使用するホストの案内を参照してください。
 
 ## 使い方
 
@@ -33,11 +32,13 @@ JSFX に対応したホストのエフェクト用フォルダに [`jsfx/AZMbezi
 ### グラフ
 
 横軸が検知レベル（dB）、縦軸がゲイン（dB）です。
+
 2本のラインはリダクションカーブを表しており、山吹色が Attack、白が Release です。カーブは中央の制御点をドラッグして調整することができます。
-下の段に Attack と Release の **Curve／基準／Range** と **Reduction** の数値欄が用意されています。
-ドラッグで変更でき、クリックすると数値を入力できます。Shift + ドラッグで微調整、Ctrl + クリックでデフォルト値にリセットします。
-Attack / Release は基準値からの相対量（Range）で調整する形式になっており、基準値はそれぞれ Attack が Open、Release が Close です。
+
+下の段に Attack と Release の **Curve／基準／Range** と **Reduction** の数値欄が用意されています。ドラッグで変更でき、クリックすると数値を入力できます。Shift + ドラッグで微調整、Ctrl + クリックでデフォルト値にリセットします。Attack / Release は基準値からの相対量（Range）で調整する形式になっており、基準値はそれぞれ Attack が Open、Release が Close です。
+
 Reduction によって減衰量の最大値を変更することができます。
+
 既定値は以下です。
 
 | 項目 | 範囲 | 既定値 |
@@ -51,8 +52,8 @@ Reduction によって減衰量の最大値を変更することができます�
 
 ### RMS CONTROL
 
-グラフ下の **RMS CONTROL** の見出しの矢印をクリックすると、RMS CONTROL セクションを開閉します。
-Peak との音量差を調整する **Sens**、RMS 計算窓 **Window**、Attack と Release に対してそれぞれ検知器へ流す波形の調整を行う **RMS Ratio** と **Smoothing Time** が用意されています。
+グラフ下の **RMS CONTROL** の見出しの矢印をクリックすると、RMS CONTROL セクションを開閉します。Peak との音量差を調整する **Sens**、RMS 計算窓 **Window**、Attack と Release に対してそれぞれ検知器へ流す波形の調整を行う **RMS Ratio** と **Smoothing Time** が用意されています。
+
 既定値は以下です。
 
 | 項目 | 範囲 | 既定値 |
@@ -63,6 +64,7 @@ Peak との音量差を調整する **Sens**、RMS 計算窓 **Window**、Attack
 | Smoothing Time | 0.1 - 100 ms | Attack 4 ms / Release 120ms |
 
 また **SYNC** を有効にすると Release にも Attack カーブを使い通常のエキスパンダーのように使うことができます。（検知回路は Attack Release 別のままです）
+
 **BYPASS** ボタンを押すと処理を行いません。
 
 ## 備考
