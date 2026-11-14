@@ -793,6 +793,9 @@ function ui_field(i x y w h tag) local(hot id dx dy dis fg bg bd v lw vw nw th e
   ldown && hot && edit_id != i ? (
     drag_id = id; drag_mx0 = mx; drag_my0 = my; drag_v0 = slider(i);
     drag_sh = shift; bound_moved = 0;
+    // Ctrl + クリックはデフォルト値に戻す（離しても入力欄は開かない。そのままドラッグすればデフォルト値から動かせる）
+    bound_rst = ctrl;
+    ctrl ? ( reset_param(i); drag_v0 = slider(i); );
   );
   drag_id == id && lmb ? (
     dx = mx - drag_mx0; dy = drag_my0 - my;
@@ -809,7 +812,7 @@ function ui_field(i x y w h tag) local(hot id dx dy dis fg bg bd v lw vw nw th e
     );
   );
   drag_id == id && !lmb && lmb_prev ? (
-    !bound_moved ? ( edit_begin(i); edit_fld = 1; );
+    !bound_moved && !bound_rst ? ( edit_begin(i); edit_fld = 1; );
     drag_id = 0;
   );
   ed = edit_id == i && edit_fld;
@@ -1199,7 +1202,7 @@ function ui_footer() local(p x w th tw) (
         setc(C_DIM, 1); txt(pget(p, 9), x + tw + 18 * S, ft_y, ui_w, ft_h, 4);
       ) : (
         setc(C_DIM, 1);
-        txt("Drag the handles or fields to shape the curves.   Right-click: type a value   Double-click: reset   Shift: fine", x, ft_y, ui_w, ft_h, 4);
+        txt("Drag the handles or fields to shape the curves.   Right-click: type a value   Ctrl+click: reset   Shift: fine", x, ft_y, ui_w, ft_h, 4);
       );
     );
   );

@@ -349,15 +349,15 @@ struct Gui : Effect {
         ysfx_gfx_setup(fx, &cfg);
         mouse(0, 0, 0);
     }
-    void mouse(int x, int y, int down)
+    void mouse(int x, int y, int down, uint32_t mods = 0)
     {
-        ysfx_gfx_update_mouse(fx, 0, x, y, down, 0, 0);
+        ysfx_gfx_update_mouse(fx, mods, x, y, down, 0, 0);
         ysfx_gfx_run(fx);
     }
-    void click(int x, int y)
+    void click(int x, int y, uint32_t mods = 0)
     {
-        mouse(x, y, 1);
-        mouse(x, y, 0);
+        mouse(x, y, 1, mods);
+        mouse(x, y, 0, mods);
     }
     void drag(double x, double y, double dx, double dy)
     {
@@ -516,6 +516,9 @@ static void test_range_field()
     near(e.var("edit_id"), 1, 0, "click the Reduction field opens the editor");
     e.type("-45\n");
     near(e.get(1), 45, 1e-9, "typed Reduction is the (negative) lower limit");
+    e.click(fx, fy, ysfx_mod_ctrl);
+    near(e.get(1), 60, 1e-9, "Ctrl+click resets the Reduction field to its default");
+    near(e.var("edit_id"), 0, 0, "Ctrl+click does not open the editor");
 }
 
 static void test_collapse_and_knobs()
