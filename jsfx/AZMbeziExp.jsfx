@@ -23,6 +23,7 @@ slider13:attack_mix=15<0,100,1>-Attack RMS Ratio (%)
 slider14:release_mix=75<0,100,1>-Release RMS Ratio (%)
 slider15:bypass=0<0,1,1{Off,On}>-Bypass
 slider16:rms_open=0<0,1,1{Closed,Open}>-RMS Control Open
+slider17:det_hpf=60<10,120,1:log>-Detector HPF (Hz)
 
 in_pin:Left
 in_pin:Right
@@ -74,6 +75,14 @@ function update_coefs() (
   dir_k = 1 - decay_of(2);
   a_mix = min(max(attack_mix * 0.01, 0), 1);
   r_mix = min(max(release_mix * 0.01, 0), 1);
+
+  // 検知用ハイパス（2 次バターワース）。出力には掛けない。
+  hp_w = 2 * $pi * min(max(det_hpf, 10), 120) / srate;
+  hp_al = sin(hp_w) * 0.7071067811865476; // sin(w0) / (2Q), Q = 1/√2
+  hp_b0 = (1 + cos(hp_w)) * 0.5 / (1 + hp_al);
+  hp_b1 = -2 * hp_b0;
+  hp_a1 = -2 * cos(hp_w) / (1 + hp_al);
+  hp_a2 = (1 - hp_al) / (1 + hp_al);
 );
 
 // スライダー変更時の処理。@slider のほか、GUI 操作後の @block からも呼ぶ。
@@ -87,9 +96,11 @@ function on_slider() (
 // デノーマル回避用の下限（EEL2 では 1e-12 の指数表記が使えない）
 floor_amp = pow(10, -12);
 floor_pow = pow(10, -24);
+hp_dc = pow(10, -18);
 eps_db = pow(10, -9);
 
 msq = 0;
+hp_l1 = hp_l2 = hp_r1 = hp_r2 = 0;
 gain_init = 1;
 gdb = 0;
 byp_m = bypass >= 0.5;
@@ -110,7 +121,7 @@ m_up = 0;
 ui_dirty = 0;
 
 // @gfx は @sample と別スレッドで動く。@sample が使う変数名
-// (a, msq, pk_lin, rms_lin, lin, lvl_db, la, lr, tgt, dir_up, gain, gdb など) を
+// (a, msq, pk_lin, rms_lin, lin, lvl_db, la, lr, tgt, dir_up, gain, gdb, hp_* など) を
 // 書き換えないこと。関数内の一時変数は必ず local() にする。
 // DSP と共有してよいのは slider 変数・m_*・ui_dirty と、GR 表示のために読むだけの gdb。
 // curve_db は @sample が使う関数なので @gfx からは呼ばない（GUI 側は下の gain_at で評価する）。
@@ -118,10 +129,11 @@ ui_dirty = 0;
 
 ui_a = ui_r = -120; // 合成後の検知レベル（dB）。Attack 側・Release 側
 ui_hl = 0; // Attack 側がアクティブなら 1 に寄る（棒と曲線の光の切り替え用）
+gl_a = 0; // curve_path を光の層として描くときの強さ（0 = 通常の線）
 ui_axis_init = 0;
 t_prev = time_precise();
 
-BW = 940; BH = 520;
+BW = 1040; BH = 520;
 
 C_BG = 0xFFFFFF; C_PANEL = 0xF3F5F9; C_TRACK = 0xDFE4EE; C_SLOT = 0xEEF1F7; C_RULE = 0xD5DBE8;
 C_TEXT = 0x1F2E54; C_DIM = 0x5F6B8A; C_FAINT = 0x9AA4BC;
@@ -255,6 +267,7 @@ pdef(11, 0.1, 100, 10, 0.1, 1, 1, "ms", "Smoothing Time", "Attack Smoothing Time
 pdef(12, 0.1, 500, 120, 0.1, 1, 1, "ms", "Smoothing Time", "Release Smoothing Time", "Gain smoothing time while the gain closes", 0);
 pdef(13, 0, 100, 30, 1, 0, 0, "%", "RMS Ratio", "Attack RMS Ratio", "0% follows Peak; 100% follows RMS", 0);
 pdef(14, 0, 100, 60, 1, 0, 0, "%", "RMS Ratio", "Release RMS Ratio", "0% follows Peak; 100% follows RMS", 0);
+pdef(17, 10, 120, 60, 1, 1, 0, "Hz", "HPF", "Detector HPF", "High-pass on the detector only (rumble, hum). The output is not filtered", 0);
 
 function pq(i v) local(pmn pmx pst) (
   pmn = pget(i, 0); pmx = pget(i, 1); pst = pget(i, 3);
@@ -557,22 +570,61 @@ function draw_grid(over) local(k x y raw step g dec every db first n la) (
   );
 );
 
+// col を C_PLOT 側へ a の割合で混ぜた不透明色にする（半透明にすると重ね描きで濃くなる図形用）。
+function setmix(col a) local(r g b) (
+  r = (((col >> 16) & 255) * a + ((C_PLOT >> 16) & 255) * (1 - a)) / 255;
+  g = (((col >> 8) & 255) * a + ((C_PLOT >> 8) & 255) * (1 - a)) / 255;
+  b = ((col & 255) * a + (C_PLOT & 255) * (1 - a)) / 255;
+  gfx_set(r, g, b, 1);
+);
+
+// 曲線の光の横方向の重み（0..1）。グラフ中央付近は 0 で、左右の端へ近づくほどなめらかに強くなり、端の手前で 1。
+function glow_wt(x) local(t) (
+  t = clamp((abs(x - g_x0 - g_w * 0.5) / max(g_w * 0.5, 1) - 0.2) / 0.7, 0, 1);
+  t * t * (3 - 2 * t);
+);
+// 光の 1 層の 1 区間。色は gl_col を gl_a × 重み の割合で C_PLOT と混ぜた不透明色。ほぼ見えない区間は描かない。
+function glow_seg(x0 y0 x1 y1 th) local(m) (
+  m = gl_a * glow_wt((x0 + x1) * 0.5);
+  m > 0.01 ? ( setmix(gl_col, m); cseg(x0, y0, x1, y1, th); );
+);
+// 水平部は長いので、グラデーションになるよう細かく区切る（境目は整数座標にそろえて隙間を作らない）。
+function glow_flat(xa xb y th) local(n k p q) (
+  xa = rnd(max(xa, clip_l)); xb = rnd(min(xb, clip_r));
+  xb > xa ? (
+    n = ceil((xb - xa) / (4 * S));
+    k = 0; p = xa;
+    loop(n,
+      k += 1;
+      q = k == n ? xb : rnd(xa + (xb - xa) * k / n);
+      q > p ? glow_seg(p, y, q, y, th);
+      p = q;
+    );
+  );
+);
+
 // 曲線 b=2 (Attack) / 6 (Release) の折れ線。両端の水平部を含め、グラフの外には出さない。
+// gl_a > 0 のときは光の 1 層として、区間ごとに glow_wt で強さを変えて描く（draw_glow 用）。
 function curve_path(b th) local(cl op span u k x0 y0 x1 y1 yb yt) (
   cl = cl_of(b); op = op_of(b);
   span = max(op - cl, 0.01);
   cp_load(b);
   yb = ypix(-range_db); yt = ypix(0);
   x0 = xpix(cl); y0 = yb;
-  cseg(clip_l, yb, x0, yb, th);
-  cseg(xpix(op), yt, clip_r, yt, th);
+  gl_a > 0 ? (
+    glow_flat(clip_l, x0, yb, th);
+    glow_flat(xpix(op), clip_r, yt, th);
+  ) : (
+    cseg(clip_l, yb, x0, yb, th);
+    cseg(xpix(op), yt, clip_r, yt, th);
+  );
   k = 0;
   loop(64,
     k += 1;
     u = k / 64;
     x1 = xpix(cl + qx(u, cp_x) * span);
     y1 = ypix(-range_db * (1 - qx(u, cp_y)));
-    cseg(x0, y0, x1, y1, th);
+    gl_a > 0 ? glow_seg(x0, y0, x1, y1, th) : cseg(x0, y0, x1, y1, th);
     x0 = x1; y0 = y1;
   );
 );
@@ -580,6 +632,16 @@ function curve_path(b th) local(cl op span u k x0 y0 x1 y1 yb yt) (
 function draw_curve(b col th) (
   setc(C_PLOT, 1); curve_path(b, th + 3 * S);
   setc(col, 1); curve_path(b, th);
+);
+
+// 両曲線が重なる水平部を半々に塗り分ける。左（全閉側）は Attack の色、右（全開側）は Release の色。
+function draw_shared_flats() local(x y) (
+  y = ypix(-range_db); x = xpix(min(cl_of(2), cl_of(6)));
+  setc(C_PLOT, 1); cseg(clip_l, y, x, y, 8.5 * S);
+  setc(C_ATT, 1); cseg(clip_l, y, x, y, 5.5 * S);
+  y = ypix(0); x = xpix(max(op_of(2), op_of(6)));
+  setc(C_PLOT, 1); cseg(x, y, clip_r, y, 8.5 * S);
+  setc(C_REL, 1); cseg(x, y, clip_r, y, 5.5 * S);
 );
 
 function draw_band() local(k n yt yb h acl rcl asp rsp yn xa xr x1 x2 ax ay rx ry) (
@@ -740,7 +802,11 @@ function ui_field(i x y w h tag) local(hot id dx dy dis fg bg bd v lw vw nw th e
       dx = dy = 0;
     );
     // Attack の Range は「−x dB」と表示するので、右へドラッグすると表示値が増える（x が減る）向きにする
-    bound_moved ? set_param(i, drag_v0 + (i == 2 ? -1 : 1) * (dx + dy) * (shift ? 0.1 : 1) * (i == 1 ? 0.25 : (pget(i, 3) >= 1 ? 0.5 : 0.05)) / S);
+    // HPF（17）は対数スケールなので正規化した位置で動かす（200 px で全域、Shift で 1/10）
+    bound_moved ? (
+      i == 17 ? set_param(i, p_from_norm(i, p_norm(i, drag_v0) + (dx + dy) * (shift ? 0.0005 : 0.005) / S)) :
+      set_param(i, drag_v0 + (i == 2 ? -1 : 1) * (dx + dy) * (shift ? 0.1 : 1) * (i == 1 ? 0.25 : (pget(i, 3) >= 1 ? 0.5 : 0.05)) / S);
+    );
   );
   drag_id == id && !lmb && lmb_prev ? (
     !bound_moved ? ( edit_begin(i); edit_fld = 1; );
@@ -787,17 +853,20 @@ function ui_field(i x y w h tag) local(hot id dx dy dis fg bg bd v lw vw nw th e
   );
 );
 
-// グラフ下 1 段: 左に Attack、その右に Release、右端（メーターの下）に Reduction（リダクション下限）。
+// グラフ下 1 段: 左端に検知用 HPF、その右に Attack、Release、右端（メーターの下）に Reduction（リダクション下限）。
 // Attack / Release は Curve / 基準（Attack は Open、Release は Close） / Range の順。
-function ui_curve_fields() local(y w h gap tw x0 cw grp cx tag nm rf gp) (
+function ui_curve_fields() local(y w h gap tw x0 cw grp cx tag nm rf gp hf) (
   h = 20 * S; y = pl_b + 12 * S; gap = 10 * S;
-  tw = 48 * S; rf = 104 * S; gp = 30 * S;
+  tw = 48 * S; rf = 104 * S; gp = 30 * S; hf = 76 * S;
   cw = ui_w - 2 * mg;
-  grp = (cw - rf - 2 * gp) * 0.5;
+  grp = (cw - hf - rf - 3 * gp) * 0.5;
   w = (grp - tw - 3 * gap) / 3;
+  ui_field(17, mg, y, hf, h, 3);
+  setc(C_RULE, 1);
+  cx = floor(mg + hf + gp * 0.5) + 0.5; gfx_line(cx, y + 1 * S, cx, y + h - 1 * S, 0);
   tag = 1;
   loop(2,
-    x0 = tag == 1 ? mg : mg + grp + gp;
+    x0 = mg + hf + gp + (tag == 1 ? 0 : grp + gp);
     nm = tag == 1 ? "ATTACK" : "RELEASE";
     font(4); setc(tag == 1 ? C_YAM3 : (ui_sync ? C_FAINT : C_PLOT), 1);
     txt(nm, x0, y, tw, h, 4);
@@ -827,14 +896,6 @@ function gain_at(b lvl) local(cl sp t u) (
   );
 );
 
-// col を C_PLOT 側へ a の割合で混ぜた不透明色にする（半透明にすると重ね描きで濃くなる図形用）。
-function setmix(col a) local(r g b) (
-  r = (((col >> 16) & 255) * a + ((C_PLOT >> 16) & 255) * (1 - a)) / 255;
-  g = (((col >> 8) & 255) * a + ((C_PLOT >> 8) & 255) * (1 - a)) / 255;
-  b = ((col & 255) * a + (C_PLOT & 255) * (1 - a)) / 255;
-  gfx_set(r, g, b, 1);
-);
-
 // グラフの横幅（g_x0 .. g_x0 + g_w）に収めて塗る。
 function bar_rect(x w y h) local(x0 x1) (
   x0 = max(x, g_x0); x1 = min(x + w, g_x0 + g_w);
@@ -862,11 +923,14 @@ function draw_bar(col raw) local(x f y0 h) (
 
 // 目標ゲインを決めている曲線のまわりを光らせる。g（0..1）は光の強さ。
 // 半透明を重ねると濃くなるので、背景色との混色（不透明）を外側から順に重ねる。
+// グラフ中央付近はまぶしくならないよう光らせず、左右の端（水平部）へ向かってグラデーションで強くする（glow_wt）。
 function draw_glow(b col g) (
   g > 0.02 ? (
-    setmix(col, 0.15 * g); curve_path(b, 21 * S);
-    setmix(col, 0.30 * g); curve_path(b, 14 * S);
-    setmix(col, 0.55 * g); curve_path(b, 9.5 * S);
+    gl_col = col;
+    gl_a = 0.15 * g; curve_path(b, 21 * S);
+    gl_a = 0.30 * g; curve_path(b, 14 * S);
+    gl_a = 0.55 * g; curve_path(b, 9.5 * S);
+    gl_a = 0;
   );
 );
 
@@ -891,13 +955,14 @@ function ui_plot() local(inp) (
   hov_h && hov_h < 150 && !lmb && wh != 0 ? ( wheel_param(hov_h - 100, wh); wh = 0; );
 
   draw_grid(0);
-  !ui_sync ? draw_band();
   ui_sync ? (
     draw_glow(2, C_SYNC, bar_vis(ui_a));
   ) : (
     draw_glow(6, C_REL, (1 - ui_hl) * bar_vis(ui_r));
     draw_glow(2, C_ATT, ui_hl * bar_vis(ui_a));
   );
+  // 帯は光の後に半透明で重ねる（光の弱い中央付近で、不透明な光の層が帯を暗く塗りつぶさないように）
+  !ui_sync ? draw_band();
   draw_grid(1);
   draw_markers();
   ui_sync ? (
@@ -906,6 +971,7 @@ function ui_plot() local(inp) (
   ) : (
     draw_curve(6, C_REL, 5.5 * S);
     draw_curve(2, C_ATT, 5.5 * S);
+    draw_shared_flats();
   );
   draw_handles();
   (hov_h || tip_edit()) ? draw_tip();
@@ -1158,8 +1224,17 @@ on_slider();
 ui_dirty ? ( ui_dirty = 0; on_slider(); );
 
 @sample
-// ステレオリンク（L/R の大きい方）で検出
-a = max(abs(spl0), abs(spl1));
+// 検知用ハイパスを通した L/R の大きい方で検出（ステレオリンク）。出力の spl0/spl1 はそのまま。
+// 転置直接形 II。b2 = b0。入力に足す微小な直流はハイパスで消え、無音時に状態がデノーマルへ落ちるのを防ぐ。
+hp_x = spl0 + hp_dc;
+hp_y0 = hp_b0 * hp_x + hp_l1;
+hp_l1 = hp_b1 * hp_x - hp_a1 * hp_y0 + hp_l2;
+hp_l2 = hp_b0 * hp_x - hp_a2 * hp_y0;
+hp_x = spl1 + hp_dc;
+hp_y1 = hp_b0 * hp_x + hp_r1;
+hp_r1 = hp_b1 * hp_x - hp_a1 * hp_y1 + hp_r2;
+hp_r2 = hp_b0 * hp_x - hp_a2 * hp_y1;
+a = max(abs(hp_y0), abs(hp_y1));
 
 // Peak is instantaneous; RMS has only its averaging window.
 msq = max(msq + rms_k * (a * a - msq), floor_pow);
@@ -1197,7 +1272,7 @@ gain += (1 - gain) * byp_m;
 spl0 *= gain;
 spl1 *= gain;
 
-@gfx 940 520
+@gfx 1040 520
 ui_w = gfx_w * SS; ui_h = gfx_h * SS;
 ui_w != buf_w || ui_h != buf_h ? ( gfx_setimgdim(0, ui_w, ui_h); buf_w = ui_w; buf_h = ui_h; );
 gfx_dest = 0;
