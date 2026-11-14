@@ -326,8 +326,8 @@ static void test_defaults()
 {
     Effect e;
     const double expected[][2] = {
-        {1, 60}, {2, 10}, {3, -55}, {4, 60}, {6, -55}, {7, 15}, {8, -60},
-        {9, 6}, {10, 60}, {11, 10}, {12, 120}, {13, 30}, {14, 60}, {16, 0},
+        {1, 60}, {2, 12}, {3, -50}, {4, 70}, {6, -50}, {7, 12}, {8, -70},
+        {9, 6}, {10, 60}, {11, 4}, {12, 120}, {13, 15}, {14, 75}, {16, 0},
     };
     for (const auto &entry : expected)
         near(e.get(int(entry[0])), entry[1], 1e-9, "default value");
@@ -420,8 +420,11 @@ static void test_axis_and_screenshot()
     check(e.var("ui_hl") > 0.95, "attack side highlighted while the level rises");
 
     if (const char *path = std::getenv("AZM_TEST_SCREENSHOT")) {
-        e.set(3, -55);
-        e.set(13, 30); e.set(14, 60);
+        // Default values, as shown in docs/gui.png.
+        e.set(1, 60);
+        e.set(2, 12); e.set(3, -50); e.set(4, 70);
+        e.set(6, -50); e.set(7, 12); e.set(8, -70);
+        e.set(13, 15); e.set(14, 75);
         e.settle();
         for (int i = 0; i < 30; ++i) e.run(0.0012, 0.0012);
         e.mouse(0, 0, 0);
@@ -521,7 +524,7 @@ static void test_collapse_and_knobs()
     near(e.get(16), 0, 0, "RMS Control starts closed");
     e.set(16, 1);
     e.mouse(0, 0, 0);
-    e.set(11, 4);
+    e.set(11, 20);
     e.set(12, 20);
     double kw = e.px("kw"), mg = e.px("mg"), gg = e.px("gg");
     // DETECTION (9, 10), ATTACK (13, 11), RELEASE (14, 12), two knobs each.
@@ -532,7 +535,7 @@ static void test_collapse_and_knobs()
         e.click(x, ky);
         e.click(x, ky);
     }
-    near(e.get(11), 10, 1e-6, "attack smoothing time reset");
+    near(e.get(11), 4, 1e-6, "attack smoothing time reset");
     near(e.get(12), 120, 1e-6, "release smoothing time reset");
 
     e.drag(int(mg + 2 * kw + gg + kw / 2), ky, 0, -30);
@@ -546,7 +549,7 @@ static void test_collapse_and_knobs()
     e.mouse(0, 0, 0);
     check(e.px("pl_b") > full_h + 50, "graph grows when the section is collapsed");
     e.click(attack_time_x, ky);
-    near(e.get(11), 10, 1e-6, "collapsed knobs are not interactive");
+    near(e.get(11), 4, 1e-6, "collapsed knobs are not interactive");
     e.click(int(mg + 10), int(e.px("kz_y") + 9));
     near(e.get(16), 1, 0, "header click expands RMS Control");
     e.mouse(0, 0, 0);
@@ -582,7 +585,7 @@ static void test_handle_drag()
 
     mid(current(), x, y);
     for (int click = 0; click < 2; ++click) e.click(int(x), int(y));
-    near(current(), -0.6, 1e-9, "double-click resets the curve");
+    near(current(), -0.7, 1e-9, "double-click resets the curve");
 }
 
 static void test_base_and_range_handles()

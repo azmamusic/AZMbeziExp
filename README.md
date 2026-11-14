@@ -49,10 +49,10 @@ Reduction によって減衰量の最大値を変更することができます�
 
 | 項目 | 範囲 | 既定値 |
 | --- | --- | --- |
-| Curve | 0 - 100% | Attack 70% / Release -70% |
-| Open |-90dB - 0dB | Attack −55 dB / Release -40dB (-55dB + 15dB ) |
-| Close | -90dB - 0dB | Attack -65dB (-55 - 10dB) / Release -55dB | 
-| Range | -0.1 - -60dB | Attack 10 dB / Release 15dB | 
+| Curve | -100 - 100% | Attack 70% / Release -70% |
+| Open |-90dB - 0dB | Attack −50 dB / Release -38dB (-50dB + 12dB ) |
+| Close | -90dB - 0dB | Attack -62dB (-50 - 12dB) / Release -50dB | 
+| Range | -0.1 - -60dB | Attack 12 dB / Release 12dB | 
 | Reduction | 0 - -96dB | -60dB |
 | HPF | 10 - 120 Hz | 60 Hz |
 
@@ -68,7 +68,7 @@ Reduction によって減衰量の最大値を変更することができます�
 | Sens | −24 - +24 dB | +6 dB |
 | Window | 1 - 200 ms | 60 ms |
 | RMS Ratio | 0 - 100% | Attack 15% / Release 75% |
-| Smoothing Time | 0.1 - 100 ms | Attack 4 ms / Release 120ms |
+| Smoothing Time | Attack 0.1 - 100 ms / Release 0.1 - 500 ms | Attack 4 ms / Release 120ms |
 
 また **SYNC** を有効にすると Release にも Attack カーブを使い通常のエキスパンダーのように使うことができます。（検知回路は Attack Release 別のままです）
 
