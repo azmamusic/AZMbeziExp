@@ -255,18 +255,18 @@ function pstr(i) (
 );
 
 pdef(1, 0, 96, 60, 0.1, 0, 1, "dB", "Reduction", "Reduction", "Maximum attenuation when closed. Also sets the graph's gain axis", 0);
-pdef(2, 0.1, 60, 10, 0.1, 0, 1, "dB", "Range", "Attack Range", "Used while the level rises. Fully closed this many dB below Open", 0);
-pdef(3, -90, 0, -55, 0.1, 0, 1, "dB", "Open", "Attack Open", "Used while the level rises. Fully open (0 dB) at or above this level. Moves the whole curve", 0);
-pdef(4, -100, 100, 60, 1, 0, 0, "%", "Curve", "Attack Curve", "Used while the level rises. + opens late, - opens early, 0 is straight", 1);
-pdef(6, -90, 0, -55, 0.1, 0, 1, "dB", "Close", "Release Close", "Used while the level falls. Fully closed at or below this level. Moves the whole curve", 0);
-pdef(7, 0.1, 60, 15, 0.1, 0, 1, "dB", "Range", "Release Range", "Used while the level falls. Fully open this many dB above Close", 0);
-pdef(8, -100, 100, -60, 1, 0, 0, "%", "Curve", "Release Curve", "Used while the level falls. + opens late, - opens early, 0 is straight", 1);
+pdef(2, 0.1, 60, 12, 0.1, 0, 1, "dB", "Range", "Attack Range", "Used while the level rises. Fully closed this many dB below Open", 0);
+pdef(3, -90, 0, -50, 0.1, 0, 1, "dB", "Open", "Attack Open", "Used while the level rises. Fully open (0 dB) at or above this level. Moves the whole curve", 0);
+pdef(4, -100, 100, 70, 1, 0, 0, "%", "Curve", "Attack Curve", "Used while the level rises. + opens late, - opens early, 0 is straight", 1);
+pdef(6, -90, 0, -50, 0.1, 0, 1, "dB", "Close", "Release Close", "Used while the level falls. Fully closed at or below this level. Moves the whole curve", 0);
+pdef(7, 0.1, 60, 12, 0.1, 0, 1, "dB", "Range", "Release Range", "Used while the level falls. Fully open this many dB above Close", 0);
+pdef(8, -100, 100, -70, 1, 0, 0, "%", "Curve", "Release Curve", "Used while the level falls. + opens late, - opens early, 0 is straight", 1);
 pdef(9, -24, 24, 6, 0.1, 0, 1, "dB", "Sens", "RMS Sensitivity", "Gain on the RMS detector. + opens on quieter sounds", 1);
 pdef(10, 1, 200, 60, 1, 1, 0, "ms", "Window", "RMS Window", "Averaging time of the RMS detector", 0);
-pdef(11, 0.1, 100, 10, 0.1, 1, 1, "ms", "Smoothing Time", "Attack Smoothing Time", "Gain smoothing time while the gain opens", 0);
+pdef(11, 0.1, 100, 4, 0.1, 1, 1, "ms", "Smoothing Time", "Attack Smoothing Time", "Gain smoothing time while the gain opens", 0);
 pdef(12, 0.1, 500, 120, 0.1, 1, 1, "ms", "Smoothing Time", "Release Smoothing Time", "Gain smoothing time while the gain closes", 0);
-pdef(13, 0, 100, 30, 1, 0, 0, "%", "RMS Ratio", "Attack RMS Ratio", "0% follows Peak; 100% follows RMS", 0);
-pdef(14, 0, 100, 60, 1, 0, 0, "%", "RMS Ratio", "Release RMS Ratio", "0% follows Peak; 100% follows RMS", 0);
+pdef(13, 0, 100, 15, 1, 0, 0, "%", "RMS Ratio", "Attack RMS Ratio", "0% follows Peak; 100% follows RMS", 0);
+pdef(14, 0, 100, 75, 1, 0, 0, "%", "RMS Ratio", "Release RMS Ratio", "0% follows Peak; 100% follows RMS", 0);
 pdef(17, 10, 120, 60, 1, 1, 0, "Hz", "HPF", "Detector HPF", "High-pass on the detector only (rumble, hum). The output is not filtered", 0);
 
 function pq(i v) local(pmn pmx pst) (
