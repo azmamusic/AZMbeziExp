@@ -66,6 +66,30 @@ struct Effect {
     }
 };
 
+// Detector-only high-pass (2nd-order Butterworth, transposed direct form II), as in @sample.
+struct DetectorHpf {
+    double b0, b1, a1, a2;
+    double z[2][2] = {{0, 0}, {0, 0}};
+    explicit DetectorHpf(double hz = 60, double rate = 48000)
+    {
+        double w = 2 * 3.141592653589793 * hz / rate, al = std::sin(w) * 0.7071067811865476;
+        b0 = (1 + std::cos(w)) * 0.5 / (1 + al);
+        b1 = -2 * b0;
+        a1 = -2 * std::cos(w) / (1 + al);
+        a2 = (1 - al) / (1 + al);
+    }
+    double operator()(int ch, double x)
+    {
+        x += 1e-18;
+        double y = b0 * x + z[ch][0];
+        z[ch][0] = b1 * x - a1 * y + z[ch][1];
+        z[ch][1] = b0 * x - a2 * y;
+        return y;
+    }
+};
+// The first sample after init passes the detector HPF with gain b0; dividing by it keeps that sample's level.
+static double first_sample(double amplitude) { return amplitude / DetectorHpf().b0; }
+
 // Curve strength in -1..1: the control point sits at (0.5 + c/2, 0.5 - c/2).
 static const double kAttackCurve = 0.5;
 static const double kReleaseCurve = -0.5;
@@ -104,6 +128,7 @@ static void compare_reference(double attack_mix, double release_mix, bool sync)
     e.set(14, release_mix * 100);
     e.set(5, sync ? 1 : 0);
     double msq = 0, gain = 0;
+    DetectorHpf hpf;
     double dir_a_f = 0, dir_r_f = 0, prev_dir_a = 0, prev_dir_r = 0;
     bool up = false;
     const double rms_k = 1 - std::exp(-1.0 / (0.040 * 48000));
@@ -115,7 +140,7 @@ static void compare_reference(double attack_mix, double release_mix, bool sync)
         double envelope = 0.0003 + 0.003 * (1 + std::sin(i * 0.0013));
         double left = envelope * std::sin(i * 0.13);
         double right = envelope * 0.7 * std::cos(i * 0.11);
-        double a = std::max(std::abs(left), std::abs(right));
+        double a = std::max(std::abs(hpf(0, left)), std::abs(hpf(1, right)));
         msq = std::max(msq + rms_k * (a * a - msq), 1e-24);
         double rms = std::sqrt(2 * msq) * rms_gain;
         auto mix = [&](double peak, double r, double ratio) {
@@ -168,12 +193,17 @@ static void test_detector_and_gain()
 {
     Effect e;
     e.set(13, 0); e.set(14, 0); e.set(10, 40);
+    // The detector hears the input through the detector HPF, which keeps ringing after the input stops.
+    DetectorHpf hpf;
+    hpf(0, 0.1); hpf(1, 0.1);
     e.run(0.1, 0.1);
     double previous_msq = e.var("msq");
     e.run(0, 0);
-    near(e.var("pk_lin"), 0, 0, "peak has no release envelope");
+    double a = std::max(std::abs(hpf(0, 0)), std::abs(hpf(1, 0)));
+    check(a > 1e-4, "the detector HPF rings after the input stops");
+    near(e.var("pk_lin"), a, 1e-12, "peak follows the filtered input with no release envelope");
     double rms_k = 1 - std::exp(-1.0 / (0.040 * 48000));
-    near(e.var("msq"), previous_msq * (1 - rms_k), 1e-14, "RMS has only window decay");
+    near(e.var("msq"), previous_msq + rms_k * (a * a - previous_msq), 1e-14, "RMS has only window decay");
 
     Effect moving;
     moving.run(0.001, 0.001);
@@ -267,7 +297,7 @@ static void test_curve_shapes()
                 double close = sync ? -65 : -55, open = sync ? -55 : -40;
                 double level_db = close + f * (open - close);
                 double amplitude = std::pow(10.0, level_db / 20);
-                e.run(amplitude, amplitude);
+                e.run(first_sample(amplitude), first_sample(amplitude));
                 near(e.var("gdb"), curve(level_db, close, open, c), 1e-6, "quadratic curve strengths");
             }
         }
@@ -288,7 +318,7 @@ static void test_curve_shapes()
     set_reference_params(straight);
     straight.set(14, 0); straight.set(8, 0);
     double amplitude = std::pow(10.0, -47.5 / 20);
-    straight.run(amplitude, amplitude);
+    straight.run(first_sample(amplitude), first_sample(amplitude));
     near(straight.var("gdb"), -20, 1e-9, "zero strength is a straight line");
 }
 
@@ -303,9 +333,10 @@ static void test_defaults()
         near(e.get(int(entry[0])), entry[1], 1e-9, "default value");
 }
 
-// GUI harness: 940x520 pixel buffer and mouse/key helpers (coordinates are in mouse units).
+// GUI harness: kGuiW x kGuiH pixel buffer (the default @gfx size) and mouse/key helpers (coordinates are in mouse units).
+static const int kGuiW = 1040, kGuiH = 520;
 struct Gui : Effect {
-    std::vector<uint8_t> pixels = std::vector<uint8_t>(940 * 520 * 4);
+    std::vector<uint8_t> pixels = std::vector<uint8_t>(size_t(kGuiW) * kGuiH * 4);
     Gui()
     {
         set(1, 40);
@@ -313,7 +344,7 @@ struct Gui : Effect {
         set(6, -55); set(7, 15); set(8, -50);
         run(0.001, 0.001);
         ysfx_gfx_config_t cfg{};
-        cfg.pixel_width = 940; cfg.pixel_height = 520;
+        cfg.pixel_width = kGuiW; cfg.pixel_height = kGuiH;
         cfg.pixels = pixels.data(); cfg.scale_factor = 1;
         ysfx_gfx_setup(fx, &cfg);
         mouse(0, 0, 0);
@@ -373,8 +404,13 @@ static void test_axis_and_screenshot()
     near(e.var("v_hi"), -35, 0.02, "synced axis ignores the stored release curve");
 
     // Live detection: meters track the combined Peak/RMS levels of each side.
+    // A 1 kHz sine (period 48 samples) passes the detector HPF; the first 100 ms let the filter settle.
     e.set(5, 0); e.set(13, 0); e.set(14, 0);
-    for (int i = 0; i < 200; ++i) e.run(0.001, 0.001);
+    auto sine = [&](int n) { double v = 0.001 * std::sin(2 * 3.141592653589793 * 1000 * n / 48000); e.run(v, v); };
+    for (int i = 0; i < 4800; ++i) sine(i);
+    e.set_var("m_a", 0); e.set_var("m_r", 0);
+    e.set_var("ui_a", -120); e.set_var("ui_r", -120);
+    for (int i = 0; i < 200; ++i) sine(4800 + i);
     e.mouse(0, 0, 0);
     near(e.var("ui_a"), -60, 0.05, "attack meter shows the combined level");
     near(e.var("ui_r"), -60, 0.05, "release meter shows the combined level");
@@ -391,7 +427,7 @@ static void test_axis_and_screenshot()
         e.mouse(0, 0, 0);
         FILE *file = std::fopen(path, "wb");
         check(file != nullptr, "open screenshot");
-        std::fprintf(file, "P6\n940 520\n255\n");
+        std::fprintf(file, "P6\n%d %d\n255\n", kGuiW, kGuiH);
         for (size_t i = 0; i < e.pixels.size(); i += 4) {
             std::fputc(e.pixels[i + 2], file);
             std::fputc(e.pixels[i + 1], file);
@@ -407,7 +443,7 @@ static void test_detection_bars()
 {
     Gui e;
     e.settle();
-    auto px = [&](double x, double y, int ch) { return int(e.pixels[(size_t(y) * 940 + size_t(x)) * 4 + ch]); };
+    auto px = [&](double x, double y, int ch) { return int(e.pixels[(size_t(y) * kGuiW + size_t(x)) * 4 + ch]); };
     auto red = [&](double x, double y) { return px(x, y, 2); };
     auto peak = [&](double x, double y) {
         int m = 0;
@@ -596,14 +632,15 @@ static void test_base_and_range_handles()
 static void test_fields()
 {
     Gui e;
-    double g_x0 = e.px("mg"), g_w = e.px("ui_w") - 2 * e.px("mg");
+    double mg = e.px("mg"), cw = e.px("ui_w") - 2 * mg;
     double y = e.px("pl_b") + 12 + 10;
-    double grp = (g_w - 104 - 60) / 2, w = (grp - 52 - 9) / 3;
+    // Row: HPF (76) | Attack | Release | Reduction (104), separated by 30.
+    double grp = (cw - 76 - 104 - 90) / 2, w = (grp - 48 - 30) / 3;
     // Field centres: Curve, Open|Close, Range of the left (Attack) and right (Release) groups.
     auto cx = [&](bool release, int k) {
         const double width[] = {0.85 * w, w, 1.15 * w};
-        double x = (release ? g_x0 + grp + 30 : g_x0) + 55;
-        for (int i = 0; i < k; ++i) x += width[i] + 3;
+        double x = mg + 76 + 30 + (release ? grp + 30 : 0) + 48 + 10;
+        for (int i = 0; i < k; ++i) x += width[i] + 10;
         return int(x + width[k] / 2);
     };
     e.drag(cx(false, 0), y, 20, 0);
@@ -634,6 +671,40 @@ static void test_fields()
     near(e.get(8), -80, 1e-9, "release fields are inactive while synced");
 }
 
+// Detector HPF: the field at the left end of the row drags on a log scale; the filter only
+// changes what the detector hears, never the output.
+static void test_detector_hpf()
+{
+    {
+        Gui e;
+        int hx = int(e.px("mg") + 38), hy = int(e.px("pl_b") + 12 + 10);
+        near(e.get(17), 60, 1e-9, "detector HPF defaults to 60 Hz");
+        e.drag(hx, hy, 20, 0);
+        near(e.get(17), 77, 1e-9, "20 px moves a tenth of the log range (60 * 12^0.1 Hz)");
+        e.click(hx, hy);
+        near(e.var("edit_id"), 17, 0, "click the HPF field opens the editor");
+        e.type("500\n");
+        near(e.get(17), 120, 1e-9, "typed HPF is limited to 120 Hz");
+    }
+    // 20 Hz rumble at -42 dBFS (RMS detection, about -36 dB): heard through a 10 Hz HPF it opens the
+    // gate; through a 120 Hz HPF it is about 31 dB lower and the gate stays closed.
+    for (double hz : {10.0, 120.0}) {
+        Effect e;
+        set_reference_params(e);
+        e.set(13, 100); e.set(14, 100);
+        e.set(17, hz);
+        const double amp = std::pow(10.0, -42.0 / 20);
+        for (int i = 0; i < 48000; ++i) {
+            double in = amp * std::sin(2 * 3.141592653589793 * 20 * i / 48000);
+            double out = e.run(in, in);
+            if (i > 47000 && std::abs(in) > 1e-4)
+                near(out / in, std::pow(10.0, e.var("gdb") / 20), 1e-9, "the output is not filtered");
+        }
+        if (hz < 60) check(e.var("gdb") > -1, "rumble opens the gate with a 10 Hz HPF");
+        else check(e.var("gdb") < -39, "rumble stays closed with a 120 Hz HPF");
+    }
+}
+
 int main()
 {
     compare_reference(0, 0, false);
@@ -655,5 +726,6 @@ int main()
     test_handle_drag();
     test_base_and_range_handles();
     test_fields();
+    test_detector_hpf();
     std::puts("ysfx integration tests passed");
 }
